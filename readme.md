@@ -1,21 +1,24 @@
-project name:
+# Project Name
 boblog or bob-ka or bob-queue
 
-project goals:
+## Project Goals
 
-v1
-Http endpoint that enables a caller to poll for realtime data updates
-	use kafka consumer pattern as a "pattern" for the apis
-	consume, ack, subscribe(?)
-	server keeps track of consumer state
-	messages live in memory, when server process ends, message queue is cleared
-		eg: compliance is restarted, there is no obligation to rebuild message queue
-	messages are "produced" from existing process, eg. notification, event from other part of system
-		assume process has message in event form in memory, and it is added to queue by an independent thread
-		allow for test "producer", that produces X events every N seconds
-	retention of in memory queue is configurable, time based trim on write - similar to eventstream pattern
+### v1
+- HTTP endpoint that enables a caller to poll for real-time data updates
+  - Use Kafka consumer pattern as a "pattern" for the APIs
+  - Consume, ack, subscribe(?)
+  - Server keeps track of consumer state
+    - Multi-consumer support
+  - Messages live in memory; when the server process ends, the message queue is cleared
+    - Example: If compliance is restarted, there is no obligation to rebuild the message queue
+  - Messages are "produced" from an existing process, e.g., notification or event from another part of the system
+    - Assume the process has a message in event form in memory, and it is added to the queue by an independent thread
+    - Allow for a test "producer" that produces X events every N seconds
+  - Retention of the in-memory queue is configurable per topic, with time-based trimming on write (similar to the event stream pattern)
 
-future
-back queue with disk persistence
-	if process serving messages fails, it will rebuild queue from disk
-process exposes a "producer" api, modeling after kafka producer
+### Future
+- Back queue with disk persistence
+  - If the process serving messages fails, it will rebuild the queue from disk
+- Process exposes a "producer" API, modeled after Kafka producer
+- OAuth token-based authorization
+- Producer and consumer role-based security per topic
