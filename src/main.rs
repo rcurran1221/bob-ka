@@ -1,16 +1,22 @@
-use actix_web::{web, App, HttpServer, Responder};
+use axum::{routing::get, Router};
+use std::net::SocketAddr;
 
-async fn hello() -> impl Responder {
+async fn hello() -> &'static str {
     "Hello, world!"
 }
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| {
-        App::new()
-            .route("/", web::get().to(hello)) // Define a route
-    })
-    .bind("127.0.0.1:8080")? // Bind to localhost on port 8080
-    .run()
-    .await
+#[tokio::main]
+async fn main() {
+    // Build the application with a route
+    let app = Router::new().route("/", get(hello));
+
+    // Define the address to bind the server
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+    println!("Listening on http://{}", addr);
+
+    // Run the server
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }

@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-artix-web = "4"
+axum = "0.6"          # Axum web framework
+tokio = { version = "1", features = ["full"] } # Async runtime required by Axum
+hyper = "0.14"        # HTTP implementation used by Axum
+tower = "0.4"         # Middleware and service abstractions
