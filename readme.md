@@ -1,5 +1,7 @@
-# Project Name
+# Project Zinger
 boblog or bob-ka or bob-queue
+lightweight RESTful Kafka-esque event stream over HTTP, written in rust
+
 
 ## Project Goals
 
