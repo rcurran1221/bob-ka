@@ -1,6 +1,6 @@
 # Project Zinger
-boblog or bob-ka or bob-queue
-lightweight RESTful Kafka-esque event stream over HTTP, written in rust
+- lightweight RESTful Kafka-esque event stream over HTTP, written in rust
+- boblog or bob-ka or bob-queue
 
 
 ## Project Goals
@@ -10,7 +10,7 @@ lightweight RESTful Kafka-esque event stream over HTTP, written in rust
   - Use Kafka consumer pattern as a "pattern" for the APIs
   - Consume, ack, subscribe(?)
   - Server keeps track of consumer state
-    - Multi-consumer support
+    - Multi-consumer "group" support, single "consumer" per group for now
   - Messages live in memory; when the server process ends, the message queue is cleared
     - Example: If compliance is restarted, there is no obligation to rebuild the message queue
   - Messages are "produced" from an existing process, e.g., notification or event from another part of the system
