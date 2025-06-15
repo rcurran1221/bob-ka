@@ -5,6 +5,5 @@ port = 8011
 
 [[topics]]
 name = "test-topic"
-mmap = true
 compression = true
 
