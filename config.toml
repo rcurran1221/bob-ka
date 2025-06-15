@@ -1,0 +1,10 @@
+title = "boblog config"
+
+[web_config]
+port = 8011
+
+[[topics]]
+name = "test-topic"
+mmap = true
+compression = true
+
