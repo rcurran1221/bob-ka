@@ -1,16 +1,18 @@
+use axum::extract::State;
 use axum::{Router, routing::get};
 use serde::Deserialize;
+use sled::{Config, Db};
+use std::collections::HashMap;
+use std::error::Error;
 use std::fs;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use toml::de::from_str;
-use std::error::Error;
-use sled::{Db, Config};
-use std::collections::HashMap;
 
 #[tokio::main]
-async fn main()  -> Result<(), Box<dyn Error>>{
+async fn main() -> Result<(), Box<dyn Error>> {
     // load the old config up
-    let config : BobConfig = match fs::read_to_string("config.toml") {
+    let config: BobConfig = match fs::read_to_string("config.toml") {
         Ok(content) => from_str(&content).expect("unable to parse config into struct"),
         Err(_) => panic!("cannot read config.toml!!"),
     };
@@ -20,10 +22,12 @@ async fn main()  -> Result<(), Box<dyn Error>>{
     for topic in config.topics.iter() {
         println!("found topic: {}", topic.name);
         println!("enable compression: {}", topic.compression);
-        let config = Config::new().use_compression(topic.compression).path(topic.name.clone());
-        let db : Db = match config.open() {
+        let config = Config::new()
+            .use_compression(topic.compression)
+            .path(topic.name.clone());
+        let db: Db = match config.open() {
             Ok(db) => db,
-            Err(_) => panic!("unable to open db: {}", topic.name.clone())
+            Err(_) => panic!("unable to open db: {}", topic.name.clone()),
         };
 
         if topic_db_map.contains_key(&topic.name) {
@@ -32,8 +36,12 @@ async fn main()  -> Result<(), Box<dyn Error>>{
         topic_db_map.insert(topic.name.clone(), db);
     }
 
+    let shared_state = Arc::new(AppState {
+        topic_db_map: topic_db_map,
+    });
+
     // Build the application with a route
-    let app = Router::new().route("/", get(hello));
+    let app = Router::new().route("/", get(hello).with_state(shared_state));
 
     // Define the address to bind the server
     let addr = SocketAddr::from(([127, 0, 0, 1], config.web_config.port));
@@ -51,6 +59,11 @@ async fn main()  -> Result<(), Box<dyn Error>>{
 async fn hello() -> &'static str {
     "Hello, world!"
 }
+
+async fn consume_handler(State(state): State<Arc<AppState>>) -> String {
+    String::new()
+}
+
 #[derive(Debug, Deserialize)]
 struct BobConfig {
     web_config: WebServerConfig,
@@ -66,4 +79,8 @@ struct WebServerConfig {
 struct TopicConfig {
     name: String,
     compression: bool,
+}
+
+struct AppState {
+    topic_db_map: HashMap<String, Db>,
 }
