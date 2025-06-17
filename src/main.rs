@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::{Router, routing::get};
 use serde::Deserialize;
 use sled::{Config, Db};
@@ -36,12 +36,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         topic_db_map.insert(topic.name.clone(), db);
     }
 
+    // todo - create the consumer state db, add to topic-db-map? how to avoid collision with user
+    // created topics
+
     let shared_state = Arc::new(AppState {
         topic_db_map: topic_db_map,
     });
 
     // Build the application with a route
-    let app = Router::new().route("/", get(hello).with_state(shared_state));
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/consume/{topic_name}/{consumer_id}", get(consume_handler))
+        .with_state(shared_state);
 
     // Define the address to bind the server
     let addr = SocketAddr::from(([127, 0, 0, 1], config.web_config.port));
@@ -56,11 +62,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn hello() -> &'static str {
-    "Hello, world!"
-}
+async fn health() -> () {}
 
-async fn consume_handler(State(state): State<Arc<AppState>>) -> String {
+async fn consume_handler(
+    Path((topic_name, consumer_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+) -> String {
     String::new()
 }
 
