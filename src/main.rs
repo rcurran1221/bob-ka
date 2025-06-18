@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::Deserialize;
 use serde_json::json;
-use sled::{Config, Db};
+use sled::{Config, Db, IVec};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -55,8 +55,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     topic_db_map.insert("consumer-state".to_string(), db);
 
-    // created topics
-
     let shared_state = Arc::new(AppState {
         topic_db_map: topic_db_map,
     });
@@ -64,7 +62,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Build the application with a route
     let app = Router::new()
         .route("/health", get(health))
-        .route("/consume/{topic_name}/{consumer_id}", get(consume_handler))
+        .route(
+            "/consume/{topic_name}/{consumer_id}/{batch_size}",
+            get(consume_handler),
+        )
         .with_state(shared_state);
 
     // Define the address to bind the server
@@ -83,7 +84,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 async fn health() -> () {}
 
 async fn consume_handler(
-    Path((topic_name, consumer_id)): Path<(String, String)>,
+    Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     let topic_db = match state.topic_db_map.get(&topic_name) {
@@ -93,10 +94,39 @@ async fn consume_handler(
                 StatusCode::NOT_FOUND,
                 Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
             );
-        },
+        }
     };
 
-    (StatusCode::OK, Json(String::new()))
+    let consumer_state_db = match state.topic_db_map.get("consumer-state") {
+        Some(db) => db,
+        None => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "consumer-state db is missing"})))
+        }
+    };
+
+    let state_key = format!("{}-{}", topic_name, consumer_id);
+    let last_consumed_msg = match consumer_state_db.get(&state_key) {
+        Ok(msg_id_result) => match msg_id_result{
+            Some(msg_id) => msg_id,
+            None => IVec::from(&[0])
+        },
+        Err(_) => {
+            println!("consumer-state db did not contain an entry for {}, setting to 0", state_key);
+            match consumer_state_db.insert(state_key, vec![0]){
+                Ok(msg_id) => match msg_id {
+                    Some(msg_id) => msg_id,
+                    None => IVec::from(&[0])
+                },
+                Err(error) => {
+                    println!("error accessing consumer state db: {}", error.to_string());
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "unable to insert into consumer state db"})))
+                }
+            }
+
+        }
+    };
+
+    (StatusCode::OK, Json(json!("")))
 }
 
 #[derive(Debug, Deserialize)]
