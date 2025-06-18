@@ -123,10 +123,7 @@ async fn consume_handler(
                         None => IVec::from(&[0]),
                     },
                     Err(error) => {
-                        println!(
-                            "error inserting into consumer state db: {}",
-                            error.to_string()
-                        );
+                        println!("error inserting into consumer state db: {}", error);
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(json!({"error": "unable to insert into consumer state db"})),
@@ -136,10 +133,7 @@ async fn consume_handler(
             }
         },
         Err(error) => {
-            println!(
-                "error reading from consumer state db: {}",
-                error.to_string()
-            );
+            println!("error reading from consumer state db: {}", error);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "unable to read from consumer state db"})),
@@ -147,8 +141,20 @@ async fn consume_handler(
         }
     };
 
-
-    let range_iter = topic_db.range(next_msg..).take(batch_size as usize);
+    let mut results: Vec<IVec> = vec![];
+    let range_iter = topic_db
+        .range(next_msg..)
+        .take(batch_size as usize)
+        .filter_map(|e| match e {
+            Ok(e) => Some(e),
+            Err(err) => {
+                print!(
+                    "error reading messages from topic: {}, error: {}",
+                    topic_name, err
+                );
+                None
+            }
+        });
 
     (StatusCode::OK, Json(json!("")))
 }
