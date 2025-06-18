@@ -118,6 +118,7 @@ dependencies = [
  "hyper",
  "serde",
  "serde_derive",
+ "serde_json",
  "sled",
  "tokio",
  "toml",

@@ -1,6 +1,9 @@
+use axum::Json;
 use axum::extract::{Path, State};
-use axum::{Router, routing::get};
+use axum::response::IntoResponse;
+use axum::{Router, http::StatusCode, routing::get};
 use serde::Deserialize;
+use serde_json::json;
 use sled::{Config, Db};
 use std::collections::HashMap;
 use std::error::Error;
@@ -82,13 +85,18 @@ async fn health() -> () {}
 async fn consume_handler(
     Path((topic_name, consumer_id)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
-) -> String {
+) -> impl IntoResponse {
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
-        None => return "test".to_string(), // todo - how to return a db not found code and error
-                                           // string?
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
+            );
+        },
     };
-    String::new()
+
+    (StatusCode::OK, Json(String::new()))
 }
 
 #[derive(Debug, Deserialize)]
