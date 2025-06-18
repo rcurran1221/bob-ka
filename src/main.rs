@@ -117,7 +117,7 @@ async fn consume_handler(
                     "consumer-state db did not contain an entry for {}, setting to 0",
                     state_key
                 );
-                match consumer_state_db.insert(state_key, vec![1]) {
+                match consumer_state_db.insert(state_key, vec![0]) {
                     Ok(msg_id) => match msg_id {
                         Some(msg_id) => msg_id,
                         None => IVec::from(&[0]),
@@ -148,8 +148,7 @@ async fn consume_handler(
     };
 
 
-    // todo - how to range from next_msg to next_msg + batch_size ?
-    // let range_iter = topic_db.range(next_msg..);
+    let range_iter = topic_db.range(next_msg..).take(batch_size as usize);
 
     (StatusCode::OK, Json(json!("")))
 }
