@@ -100,31 +100,56 @@ async fn consume_handler(
     let consumer_state_db = match state.topic_db_map.get("consumer-state") {
         Some(db) => db,
         None => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "consumer-state db is missing"})))
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "consumer-state db is missing"})),
+            );
         }
     };
 
     let state_key = format!("{}-{}", topic_name, consumer_id);
-    let last_consumed_msg = match consumer_state_db.get(&state_key) {
-        Ok(msg_id_result) => match msg_id_result{
+    // todo - is there a get or insert function?
+    let next_msg = match consumer_state_db.get(&state_key) {
+        Ok(msg_id_opt) => match msg_id_opt {
             Some(msg_id) => msg_id,
-            None => IVec::from(&[0])
-        },
-        Err(_) => {
-            println!("consumer-state db did not contain an entry for {}, setting to 0", state_key);
-            match consumer_state_db.insert(state_key, vec![0]){
-                Ok(msg_id) => match msg_id {
-                    Some(msg_id) => msg_id,
-                    None => IVec::from(&[0])
-                },
-                Err(error) => {
-                    println!("error accessing consumer state db: {}", error.to_string());
-                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "unable to insert into consumer state db"})))
+            None => {
+                println!(
+                    "consumer-state db did not contain an entry for {}, setting to 0",
+                    state_key
+                );
+                match consumer_state_db.insert(state_key, vec![1]) {
+                    Ok(msg_id) => match msg_id {
+                        Some(msg_id) => msg_id,
+                        None => IVec::from(&[0]),
+                    },
+                    Err(error) => {
+                        println!(
+                            "error inserting into consumer state db: {}",
+                            error.to_string()
+                        );
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({"error": "unable to insert into consumer state db"})),
+                        );
+                    }
                 }
             }
-
+        },
+        Err(error) => {
+            println!(
+                "error reading from consumer state db: {}",
+                error.to_string()
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "unable to read from consumer state db"})),
+            );
         }
     };
+
+
+    // todo - how to range from next_msg to next_msg + batch_size ?
+    // let range_iter = topic_db.range(next_msg..);
 
     (StatusCode::OK, Json(json!("")))
 }
