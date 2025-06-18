@@ -22,12 +22,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
     for topic in config.topics.iter() {
         println!("found topic: {}", topic.name);
         println!("enable compression: {}", topic.compression);
+        if topic.name == "consumer-state" {
+            panic!("cannot have a topic named consumer-state");
+        }
         let config = Config::new()
             .use_compression(topic.compression)
             .path(topic.name.clone());
         let db: Db = match config.open() {
             Ok(db) => db,
-            Err(_) => panic!("unable to open db: {}", topic.name.clone()),
+            Err(e) => panic!(
+                "unable to open db: {}, error: {}",
+                topic.name.clone(),
+                e.to_string()
+            ),
         };
 
         if topic_db_map.contains_key(&topic.name) {
@@ -36,7 +43,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         topic_db_map.insert(topic.name.clone(), db);
     }
 
-    // todo - create the consumer state db, add to topic-db-map? how to avoid collision with user
+    println!("opening consumer state db");
+
+    let db: Db = match sled::open("consumer-state") {
+        Ok(db) => db,
+        Err(e) => panic!("unable to open consumer statedb: {}", e.to_string()),
+    };
+
+    topic_db_map.insert("consumer-state".to_string(), db);
+
     // created topics
 
     let shared_state = Arc::new(AppState {
@@ -68,6 +83,11 @@ async fn consume_handler(
     Path((topic_name, consumer_id)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
 ) -> String {
+    let topic_db = match state.topic_db_map.get(&topic_name) {
+        Some(db) => db,
+        None => return "test".to_string(), // todo - how to return a db not found code and error
+                                           // string?
+    };
     String::new()
 }
 
