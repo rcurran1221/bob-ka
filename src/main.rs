@@ -2,7 +2,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::{Router, http::StatusCode, routing::get};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sled::{Config, Db, IVec};
 use std::collections::HashMap;
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn health() -> () {}
+async fn health() {}
 
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
@@ -141,12 +141,15 @@ async fn consume_handler(
         }
     };
 
-    let mut results: Vec<IVec> = vec![];
-    let range_iter = topic_db
+    // array of key-value pairs eg. [{msg_id: 123, msg: {.. valid json obj}}]
+    let messages: Vec<(String, String)> = topic_db
         .range(next_msg..)
         .take(batch_size as usize)
         .filter_map(|e| match e {
-            Ok(e) => Some(e),
+            Ok(e) => Some((
+                String::from_utf8(e.0.to_vec()).unwrap(), // todo - better error handling
+                String::from_utf8(e.1.to_vec()).unwrap(),
+            )),
             Err(err) => {
                 print!(
                     "error reading messages from topic: {}, error: {}",
@@ -154,9 +157,11 @@ async fn consume_handler(
                 );
                 None
             }
-        });
+        })
+        .collect();
 
-    (StatusCode::OK, Json(json!("")))
+    // todo - make a "message struct"?
+    (StatusCode::OK, Json(Value(messages)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +179,12 @@ struct WebServerConfig {
 struct TopicConfig {
     name: String,
     compression: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Message {
+    msg_id: u64,
+    message: String,
 }
 
 struct AppState {
