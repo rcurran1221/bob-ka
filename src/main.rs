@@ -33,11 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .path(topic.name.clone());
         let db: Db = match config.open() {
             Ok(db) => db,
-            Err(e) => panic!(
-                "unable to open db: {}, error: {}",
-                topic.name.clone(),
-                e.to_string()
-            ),
+            Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
         };
 
         if topic_db_map.contains_key(&topic.name) {
@@ -50,14 +46,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let db: Db = match sled::open("consumer-state") {
         Ok(db) => db,
-        Err(e) => panic!("unable to open consumer statedb: {}", e.to_string()),
+        Err(e) => panic!("unable to open consumer statedb: {}", e),
     };
 
     topic_db_map.insert("consumer-state".to_string(), db);
 
-    let shared_state = Arc::new(AppState {
-        topic_db_map: topic_db_map,
-    });
+    let shared_state = Arc::new(AppState { topic_db_map });
 
     // Build the application with a route
     let app = Router::new()
@@ -146,10 +140,26 @@ async fn consume_handler(
         .range(next_msg..)
         .take(batch_size as usize)
         .filter_map(|e| match e {
-            Ok(e) => Some((
-                String::from_utf8(e.0.to_vec()).unwrap(), // todo - better error handling
-                String::from_utf8(e.1.to_vec()).unwrap(),
-            )),
+            Ok(e) => {
+                // if key from utf8 or value from utf8 err => return None
+                let key = match String::from_utf8(e.0.to_vec()) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        println!("string from utf8 failed for key: {}", e);
+                        return None;
+                    }
+                };
+
+                let value = match String::from_utf8(e.1.to_vec()) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        println!("string from utf8 failed for key: {}", e);
+                        return None;
+                    }
+                };
+
+                Some((key, value))
+            }
             Err(err) => {
                 print!(
                     "error reading messages from topic: {}, error: {}",
