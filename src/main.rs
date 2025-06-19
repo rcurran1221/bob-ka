@@ -160,8 +160,10 @@ async fn consume_handler(
         })
         .collect();
 
-    // todo - make a "message struct"?
-    (StatusCode::OK, Json(Value(messages)))
+    (
+        StatusCode::OK,
+        Json(json!(serde_json::to_string(&messages).unwrap())),
+    )
 }
 
 #[derive(Debug, Deserialize)]
