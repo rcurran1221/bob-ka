@@ -50,6 +50,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             "/consume/{topic_name}/{consumer_id}/{batch_size}",
             get(consume_handler),
         )
+        .route("/produce/{topic_name}", post(produce_handler))
         .with_state(shared_state);
 
     // Run the server
@@ -62,6 +63,41 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 }
 
 async fn health() {}
+
+async fn produce_handler(
+    Json(payload): Json<serde_json::Value>,
+    Path(topic_name): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let topic_db = match state.topic_db_map.get(&topic_name) {
+        Some(db) => db,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
+            );
+        }
+    };
+
+    let id = match topic_db.generate_id() {
+        Ok(id) => id,
+        Err(e) => {
+            println!(
+                "encountered error when trying to generate id for topic: {}, error: {}",
+                topic_name, e
+            );
+            // todo - struct for error responses
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("unable to generate id for topic: {}", topic_name)})),
+            );
+        }
+    };
+
+    topic_db.insert(id.to_be_bytes(), payload);
+
+    return (StatusCode::OK, Json(json!({})));
+}
 
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
