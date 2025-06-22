@@ -164,19 +164,19 @@ async fn consume_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct BobConfig {
-    web_config: WebServerConfig,
-    topics: Vec<TopicConfig>,
+    pub web_config: WebServerConfig,
+    pub topics: Vec<TopicConfig>,
 }
 
 #[derive(Debug, Deserialize)]
-struct WebServerConfig {
-    port: u16,
+pub struct WebServerConfig {
+    pub port: u16,
 }
 
 #[derive(Debug, Deserialize)]
-struct TopicConfig {
-    name: String,
-    compression: bool,
+pub struct TopicConfig {
+    pub name: String,
+    pub compression: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
