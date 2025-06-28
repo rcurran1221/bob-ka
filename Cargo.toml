@@ -12,7 +12,7 @@ name = "bob_ka"
 path = "src/lib.rs"
 
 [dependencies]
-axum = "0.8"          # Axum web framework
+axum = {version = "0.8", features = ["macros"]}          # Axum web framework
 tokio = { version = "1", features = ["full"] } # Async runtime required by Axum
 hyper = "1.6"        # HTTP implementation used by Axum
 tower = "0.5"         # Middleware and service abstractions

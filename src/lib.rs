@@ -1,9 +1,10 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
+use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec};
 use std::collections::HashMap;
 use std::error::Error;
@@ -65,9 +66,9 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 async fn health() {}
 
 async fn produce_handler(
-    Json(payload): Json<serde_json::Value>,
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
+    Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
@@ -94,9 +95,37 @@ async fn produce_handler(
         }
     };
 
-    topic_db.insert(id.to_be_bytes(), payload);
+    let payload_as_bytes = match to_vec(&payload) {
+        Ok(p) => p,
+        Err(e) => {
+            println!(
+                "encountered error when converting payload to vec for topic: {}, error: {}",
+                topic_name, e
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(
+                    json!({"error": format!("unable to convert payload to bytes for topic: {}", topic_name)}),
+                ),
+            );
+        }
+    };
 
-    return (StatusCode::OK, Json(json!({})));
+    match topic_db.insert(id.to_be_bytes(), payload_as_bytes) {
+        Ok(_) => println!(
+            "successfully produced message: {} for topic: {}",
+            id, topic_name
+        ),
+        Err(e) => {
+            println!("error inserting payload: {}", e);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("error inserting payload: {}", e)})),
+            );
+        }
+    }
+
+    (StatusCode::OK, Json(json!({"messageId": id})))
 }
 
 async fn consume_handler(
