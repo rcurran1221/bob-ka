@@ -12,12 +12,13 @@ name = "bob_ka"
 path = "src/lib.rs"
 
 [dependencies]
-axum = {version = "0.8", features = ["macros"]}          # Axum web framework
-tokio = { version = "1", features = ["full"] } # Async runtime required by Axum
-hyper = "1.6"        # HTTP implementation used by Axum
-tower = "0.5"         # Middleware and service abstractions
+axum = {version = "0.8", features = ["macros"]}
+tokio = { version = "1", features = ["full"] }
+hyper = "1.6"
+tower = "0.5"
 toml = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 serde_derive = "1.0"
 serde_json = "1.0"
 sled = { version = "0.34", features = ["compression"]}
+reqwest = { version = "0.12", features = ["blocking", "json"] } # todo - this is only a test dep

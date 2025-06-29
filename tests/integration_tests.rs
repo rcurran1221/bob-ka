@@ -1,4 +1,5 @@
 use bob_ka::{BobConfig, TopicConfig, WebServerConfig};
+use reqwest::{Client};
 
 #[tokio::test]
 async fn test() {
