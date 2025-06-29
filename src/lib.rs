@@ -37,7 +37,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     let db: Db = match sled::open("consumer-state") {
         Ok(db) => db,
-        Err(e) => panic!("unable to open consumer statedb: {}", e),
+        Err(e) => panic!("unable to open consumer statedb: {e}"),
     };
 
     topic_db_map.insert("consumer-state".to_string(), db);
@@ -56,7 +56,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     // Run the server
     let addr = format!("0.0.0.0:{}", config.web_config.port);
-    println!("listening at: {}", addr);
+    println!("listening at: {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 
@@ -84,8 +84,7 @@ async fn produce_handler(
         Ok(id) => id,
         Err(e) => {
             println!(
-                "encountered error when trying to generate id for topic: {}, error: {}",
-                topic_name, e
+                "encountered error when trying to generate id for topic: {topic_name}, error: {e}"
             );
             // todo - struct for error responses
             return (
@@ -99,8 +98,7 @@ async fn produce_handler(
         Ok(p) => p,
         Err(e) => {
             println!(
-                "encountered error when converting payload to vec for topic: {}, error: {}",
-                topic_name, e
+                "encountered error when converting payload to vec for topic: {topic_name}, error: {e}"
             );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -112,12 +110,9 @@ async fn produce_handler(
     };
 
     match topic_db.insert(id.to_be_bytes(), payload_as_bytes) {
-        Ok(_) => println!(
-            "successfully produced message: {} for topic: {}",
-            id, topic_name
-        ),
+        Ok(_) => println!("successfully produced message: {id} for topic: {topic_name}"),
         Err(e) => {
-            println!("error inserting payload: {}", e);
+            println!("error inserting payload: {e}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": format!("error inserting payload: {}", e)})),
@@ -152,15 +147,14 @@ async fn consume_handler(
         }
     };
 
-    let state_key = format!("{}-{}", topic_name, consumer_id);
+    let state_key = format!("{topic_name}-{consumer_id}");
     // todo - is there a get or insert function?
     let next_msg = match consumer_state_db.get(&state_key) {
         Ok(msg_id_opt) => match msg_id_opt {
             Some(msg_id) => msg_id,
             None => {
                 println!(
-                    "consumer-state db did not contain an entry for {}, setting to 0",
-                    state_key
+                    "consumer-state db did not contain an entry for {state_key}, setting to 0"
                 );
                 match consumer_state_db.insert(state_key, vec![0]) {
                     Ok(msg_id) => match msg_id {
@@ -168,7 +162,7 @@ async fn consume_handler(
                         None => IVec::from(&[0]),
                     },
                     Err(error) => {
-                        println!("error inserting into consumer state db: {}", error);
+                        println!("error inserting into consumer state db: {error}");
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
                             Json(json!({"error": "unable to insert into consumer state db"})),
@@ -178,7 +172,7 @@ async fn consume_handler(
             }
         },
         Err(error) => {
-            println!("error reading from consumer state db: {}", error);
+            println!("error reading from consumer state db: {error}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "unable to read from consumer state db"})),
@@ -196,7 +190,7 @@ async fn consume_handler(
                 let key = match String::from_utf8(e.0.to_vec()) {
                     Ok(key) => key,
                     Err(e) => {
-                        println!("string from utf8 failed for key: {}", e);
+                        println!("string from utf8 failed for key: {e}");
                         return None;
                     }
                 };
@@ -204,7 +198,7 @@ async fn consume_handler(
                 let value = match String::from_utf8(e.1.to_vec()) {
                     Ok(value) => value,
                     Err(e) => {
-                        println!("string from utf8 failed for key: {}", e);
+                        println!("string from utf8 failed for key: {e}");
                         return None;
                     }
                 };
@@ -213,9 +207,7 @@ async fn consume_handler(
             }
             Err(err) => {
                 print!(
-                    "error reading messages from topic: {}, error: {}",
-                    topic_name, err
-                );
+                    "error reading messages from topic: {topic_name}, error: {err}");
                 None
             }
         })
