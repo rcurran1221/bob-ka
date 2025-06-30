@@ -34,6 +34,8 @@ async fn test() {
     let consume_resp = client.get("http://localhost:1234/consume/test-topic/123/1").send().await.unwrap();
 
     assert_eq!(consume_resp.status(), StatusCode::OK);
+    let resp_body = consume_resp.text().await.unwrap();
+    print!("{resp_body}");
 }
 
 #[derive(Serialize, Deserialize)]

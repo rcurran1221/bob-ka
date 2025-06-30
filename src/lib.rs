@@ -181,19 +181,19 @@ async fn consume_handler(
     };
 
     // array of key-value pairs eg. [{msg_id: 123, msg: {.. valid json obj}}]
-    let messages: Vec<(String, String)> = topic_db
+    let messages: Vec<(u64, String)> = topic_db
         .range(next_msg..)
         .take(batch_size as usize)
         .filter_map(|e| match e {
             Ok(e) => {
                 // if key from utf8 or value from utf8 err => return None
-                let key = match String::from_utf8(e.0.to_vec()) {
-                    Ok(key) => key,
-                    Err(e) => {
-                        println!("string from utf8 failed for key: {e}");
-                        return None;
-                    }
-                };
+                let key = u64::from_be_bytes(e.0.to_vec().try_into().expect("failed to convert to u64"));
+                //     Ok(key) => key,
+                //     Err(e) => {
+                //         println!("string from utf8 failed for key: {e}");
+                //         return None;
+                //     }
+                // };
 
                 let value = match String::from_utf8(e.1.to_vec()) {
                     Ok(value) => value,
@@ -207,7 +207,8 @@ async fn consume_handler(
             }
             Err(err) => {
                 print!(
-                    "error reading messages from topic: {topic_name}, error: {err}");
+                    "error reading messages from topic: {topic_name}, error: {err}"
+                );
                 None
             }
         })
