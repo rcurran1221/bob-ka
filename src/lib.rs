@@ -180,20 +180,19 @@ async fn consume_handler(
         }
     };
 
-    // array of key-value pairs eg. [{msg_id: 123, msg: {.. valid json obj}}]
-    let messages: Vec<(u64, String)> = topic_db
+    let messages: Vec<Message> = topic_db
         .range(next_msg..)
         .take(batch_size as usize)
         .filter_map(|e| match e {
             Ok(e) => {
                 // if key from utf8 or value from utf8 err => return None
-                let key = u64::from_be_bytes(e.0.to_vec().try_into().expect("failed to convert to u64"));
-                //     Ok(key) => key,
-                //     Err(e) => {
-                //         println!("string from utf8 failed for key: {e}");
-                //         return None;
-                //     }
-                // };
+                let vec_as_array: [u8; 8] = match e.0.to_vec().try_into() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        println!("failed to convert vec into [u8; 8]");
+                        return None;
+                    }
+                };
 
                 let value = match String::from_utf8(e.1.to_vec()) {
                     Ok(value) => value,
@@ -203,12 +202,13 @@ async fn consume_handler(
                     }
                 };
 
-                Some((key, value))
+                Some(Message {
+                    msg_id: u64::from_be_bytes(vec_as_array),
+                    message: value,
+                })
             }
             Err(err) => {
-                print!(
-                    "error reading messages from topic: {topic_name}, error: {err}"
-                );
+                print!("error reading messages from topic: {topic_name}, error: {err}");
                 None
             }
         })
@@ -245,4 +245,9 @@ struct Message {
 
 struct AppState {
     topic_db_map: HashMap<String, Db>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ErrorResponse {
+    message: String,
 }
