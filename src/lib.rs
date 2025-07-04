@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, to_vec};
+use serde_json::{json, ser, to_vec};
 use sled::{Config, Db, IVec};
 use std::collections::HashMap;
 use std::error::Error;
@@ -35,14 +35,15 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     println!("opening consumer state db");
 
-    let db: Db = match sled::open("consumer-state") {
+    let consumer_state_db: Db = match sled::open("consumer_state") {
         Ok(db) => db,
         Err(e) => panic!("unable to open consumer statedb: {e}"),
     };
 
-    topic_db_map.insert("consumer-state".to_string(), db);
-
-    let shared_state = Arc::new(AppState { topic_db_map });
+    let shared_state = Arc::new(AppState {
+        topic_db_map,
+        consumer_state_db,
+    });
 
     // Build the application with a route
     let app = Router::new()
@@ -50,6 +51,10 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         .route(
             "/consume/{topic_name}/{consumer_id}/{batch_size}",
             get(consume_handler),
+        )
+        .route(
+            "/ack/{topic_name}/{consumer_id}/{last_msg_id}",
+            post(ack_handler),
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .with_state(shared_state);
@@ -64,6 +69,36 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 }
 
 async fn health() {}
+
+async fn ack_handler(
+    Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // get topic name, consumer id, message number from request
+    // update consumer state db with key - topic_name:consumer_id, value - message number +1
+    let state_key = &format!("{topic_name}-{consumer_id}");
+    let previous_consumer_state = match state
+        .consumer_state_db
+        .insert(state_key, IVec::from(&ack_msg_id.to_be_bytes()))
+    {
+        Ok(s) => match s {
+            Some(s) => u64::from_be_bytes(s.to_vec().try_into().unwrap()),
+            None => 0,
+        },
+        Err(e) => {
+            println!(
+                "received error when inserting consumer_state_db for key: {state_key}, error: {e}"
+            );
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
+
+    println!(
+        "consumer state for {state_key} updated from {previous_consumer_state} to {ack_msg_id}"
+    );
+
+    StatusCode::OK
+}
 
 async fn produce_handler(
     Path(topic_name): Path<String>,
@@ -137,26 +172,16 @@ async fn consume_handler(
         }
     };
 
-    let consumer_state_db = match state.topic_db_map.get("consumer-state") {
-        Some(db) => db,
-        None => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "consumer-state db is missing"})),
-            );
-        }
-    };
-
     let state_key = format!("{topic_name}-{consumer_id}");
     // todo - is there a get or insert function?
-    let next_msg = match consumer_state_db.get(&state_key) {
+    let next_msg = match state.consumer_state_db.get(&state_key) {
         Ok(msg_id_opt) => match msg_id_opt {
             Some(msg_id) => msg_id,
             None => {
                 println!(
                     "consumer-state db did not contain an entry for {state_key}, setting to 0"
                 );
-                match consumer_state_db.insert(state_key, vec![0]) {
+                match state.consumer_state_db.insert(state_key, vec![0]) {
                     Ok(msg_id) => match msg_id {
                         Some(msg_id) => msg_id,
                         None => IVec::from(&[0]),
@@ -245,6 +270,8 @@ struct Message {
 
 struct AppState {
     topic_db_map: HashMap<String, Db>,
+    consumer_state_db: Db,
+    // todo - statistics db?
 }
 
 #[derive(Debug, Deserialize, Serialize)]

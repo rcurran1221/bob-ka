@@ -19,23 +19,30 @@ async fn test() {
     });
 
     let client = Client::new();
-    let produce_resp = client
-        .post("http://localhost:1234/produce/test-topic")
-        .json(&Message {
-            event_name: "test event".to_string(),
-            event_data: "this is data".to_string(),
-        })
-        .send()
-        .await
-        .unwrap();
+    // produce n messages
+    for i in 0..5 {
+        let produce_resp = client
+            .post("http://localhost:1234/produce/test-topic")
+            .json(&Message {
+                event_name: format!("event{i}").to_string(),
+                event_data: "this is data".to_string(),
+            })
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(produce_resp.status(), StatusCode::OK);
+        assert_eq!(produce_resp.status(), StatusCode::OK);
+    }
+
+    // consume n messages in batches of m, ack in between
 
     let consume_resp = client.get("http://localhost:1234/consume/test-topic/123/1").send().await.unwrap();
 
     assert_eq!(consume_resp.status(), StatusCode::OK);
     let resp_body = consume_resp.text().await.unwrap();
     print!("{resp_body}");
+
+    // assert messages are read in order
 }
 
 #[derive(Serialize, Deserialize)]
