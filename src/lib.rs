@@ -181,19 +181,6 @@ async fn consume_handler(
                     "consumer-state db did not contain an entry for {state_key}, setting to 0"
                 );
                 IVec::from(&[0])
-                // match state.consumer_state_db.insert(state_key, vec![0]) {
-                //     Ok(msg_id) => match msg_id {
-                //         Some(msg_id) => msg_id,
-                //         None => IVec::from(&[0]),
-                //     },
-                //     Err(error) => {
-                //         println!("error inserting into consumer state db: {error}");
-                //         return (
-                //             StatusCode::INTERNAL_SERVER_ERROR,
-                //             Json(json!({"error": "unable to insert into consumer state db"})),
-                //         );
-                //     }
-                // }
             }
         },
         Err(error) => {

@@ -61,6 +61,10 @@ async fn test() {
     }
 }
 
+// todo - concurrent topic production, multiple consumers
+// assert  messages produced within single process stay in order
+// assert all consumers get all messages in expected order
+
 #[derive(Serialize, Deserialize)]
 struct Message {
     event_data: String,
