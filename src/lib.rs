@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, ser, to_vec};
+use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec};
 use std::collections::HashMap;
 use std::error::Error;
@@ -74,7 +74,6 @@ async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-
     let state_key = &format!("{topic_name}-{consumer_id}");
     let new_consumer_state = ack_msg_id + 1;
 
@@ -130,6 +129,7 @@ async fn produce_handler(
         }
     };
 
+    println!("got payload {payload}");
     let payload_as_bytes = match to_vec(&payload) {
         Ok(p) => p,
         Err(e) => {
@@ -162,14 +162,12 @@ async fn produce_handler(
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+) -> Result<Json<Vec<Message>>, StatusCode> {
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
-            );
+            println!("topic not found: {topic_name}");
+            return Err(StatusCode::NOT_FOUND);
         }
     };
 
@@ -200,10 +198,7 @@ async fn consume_handler(
         },
         Err(error) => {
             println!("error reading from consumer state db: {error}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "unable to read from consumer state db"})),
-            );
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
 
@@ -229,9 +224,11 @@ async fn consume_handler(
                     }
                 };
 
+                println!("{value}");
+
                 Some(Message {
                     msg_id: u64::from_be_bytes(vec_as_array),
-                    message: value,
+                    message: serde_json::from_str(&value).unwrap(),
                 })
             }
             Err(err) => {
@@ -241,10 +238,7 @@ async fn consume_handler(
         })
         .collect();
 
-    (
-        StatusCode::OK,
-        Json(json!(serde_json::to_string(&messages).unwrap())),
-    )
+    Ok(Json(messages))
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,7 +261,7 @@ pub struct TopicConfig {
 #[derive(Debug, Deserialize, Serialize)]
 struct Message {
     msg_id: u64,
-    message: String,
+    message: serde_json::Value,
 }
 
 struct AppState {

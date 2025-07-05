@@ -43,17 +43,32 @@ async fn test() {
 
         assert_eq!(consume_resp.status(), StatusCode::OK);
         let resp_body = consume_resp.text().await.unwrap();
-        let msgs : Vec<Message> = serde_json::from_str(&resp_body).unwrap();
+        println!("{resp_body}");
+        let msgs: Vec<Event> = serde_json::from_str(&resp_body).unwrap();
+        // let msgs : Vec<Event> = consume_resp.json().await.unwrap();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].event_name, format!("event{i}"))
+        assert_eq!(msgs[0].message.event_name, format!("event{i}"));
+        let msg_id = msgs[0].msg_id;
 
         // ack messgae
-        // todo
+        let ack_resp = client
+            .post(format!("http://localhost:1234/ack/test-topic/123/{msg_id}"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(ack_resp.status(), StatusCode::OK);
     }
 }
 
 #[derive(Serialize, Deserialize)]
 struct Message {
-    event_name: String,
     event_data: String,
+    event_name: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Event {
+    msg_id: u64,
+    message: Message,
 }
