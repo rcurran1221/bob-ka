@@ -74,12 +74,13 @@ async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // get topic name, consumer id, message number from request
-    // update consumer state db with key - topic_name:consumer_id, value - message number +1
+
     let state_key = &format!("{topic_name}-{consumer_id}");
+    let new_consumer_state = ack_msg_id + 1;
+
     let previous_consumer_state = match state
         .consumer_state_db
-        .insert(state_key, IVec::from(&ack_msg_id.to_be_bytes()))
+        .insert(state_key, IVec::from(&new_consumer_state.to_be_bytes()))
     {
         Ok(s) => match s {
             Some(s) => u64::from_be_bytes(s.to_vec().try_into().unwrap()),
@@ -94,7 +95,7 @@ async fn ack_handler(
     };
 
     println!(
-        "consumer state for {state_key} updated from {previous_consumer_state} to {ack_msg_id}"
+        "consumer state for {state_key} updated from {previous_consumer_state} to {new_consumer_state}"
     );
 
     StatusCode::OK
@@ -181,19 +182,20 @@ async fn consume_handler(
                 println!(
                     "consumer-state db did not contain an entry for {state_key}, setting to 0"
                 );
-                match state.consumer_state_db.insert(state_key, vec![0]) {
-                    Ok(msg_id) => match msg_id {
-                        Some(msg_id) => msg_id,
-                        None => IVec::from(&[0]),
-                    },
-                    Err(error) => {
-                        println!("error inserting into consumer state db: {error}");
-                        return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(json!({"error": "unable to insert into consumer state db"})),
-                        );
-                    }
-                }
+                IVec::from(&[0])
+                // match state.consumer_state_db.insert(state_key, vec![0]) {
+                //     Ok(msg_id) => match msg_id {
+                //         Some(msg_id) => msg_id,
+                //         None => IVec::from(&[0]),
+                //     },
+                //     Err(error) => {
+                //         println!("error inserting into consumer state db: {error}");
+                //         return (
+                //             StatusCode::INTERNAL_SERVER_ERROR,
+                //             Json(json!({"error": "unable to insert into consumer state db"})),
+                //         );
+                //     }
+                // }
             }
         },
         Err(error) => {

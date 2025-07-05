@@ -34,15 +34,22 @@ async fn test() {
         assert_eq!(produce_resp.status(), StatusCode::OK);
     }
 
-    // consume n messages in batches of m, ack in between
+    for i in 0..5 {
+        let consume_resp = client
+            .get("http://localhost:1234/consume/test-topic/123/1")
+            .send()
+            .await
+            .unwrap();
 
-    let consume_resp = client.get("http://localhost:1234/consume/test-topic/123/1").send().await.unwrap();
+        assert_eq!(consume_resp.status(), StatusCode::OK);
+        let resp_body = consume_resp.text().await.unwrap();
+        let msgs : Vec<Message> = serde_json::from_str(&resp_body).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].event_name, format!("event{i}"))
 
-    assert_eq!(consume_resp.status(), StatusCode::OK);
-    let resp_body = consume_resp.text().await.unwrap();
-    print!("{resp_body}");
-
-    // assert messages are read in order
+        // ack messgae
+        // todo
+    }
 }
 
 #[derive(Serialize, Deserialize)]
