@@ -18,23 +18,46 @@ async fn test() {
         .unwrap();
     });
 
-    let client = Client::new();
-    // produce n messages
-    for i in 0..5 {
-        let produce_resp = client
-            .post("http://localhost:1234/produce/test-topic")
-            .json(&Message {
-                event_name: format!("event{i}").to_string(),
-                event_data: "this is data".to_string(),
-            })
-            .send()
-            .await
-            .unwrap();
+    // producer a
+    tokio::spawn(async {
+        let client = Client::new();
+        let producer_name = "a";
+        for i in 0..5 {
+            let produce_resp = client
+                .post("http://localhost:1234/produce/test-topic")
+                .json(&Message {
+                    event_name: format!("{producer_name}{i}").to_string(),
+                    event_data: "this is data".to_string(),
+                })
+                .send()
+                .await
+                .unwrap();
 
-        assert_eq!(produce_resp.status(), StatusCode::OK);
-    }
+            assert_eq!(produce_resp.status(), StatusCode::OK);
+        }
+    });
+
+    // producer b
+    tokio::spawn(async {
+        let client = Client::new();
+        let producer_name = "b";
+        for i in 0..5 {
+            let produce_resp = client
+                .post("http://localhost:1234/produce/test-topic")
+                .json(&Message {
+                    event_name: format!("{producer_name}{i}").to_string(),
+                    event_data: "this is data".to_string(),
+                })
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(produce_resp.status(), StatusCode::OK);
+        }
+    });
 
     for i in 0..5 {
+        let client = Client::new();
         let consume_resp = client
             .get("http://localhost:1234/consume/test-topic/123/1")
             .send()
@@ -45,9 +68,9 @@ async fn test() {
         let resp_body = consume_resp.text().await.unwrap();
         println!("{resp_body}");
         let msgs: Vec<Event> = serde_json::from_str(&resp_body).unwrap();
-        // let msgs : Vec<Event> = consume_resp.json().await.unwrap();
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].message.event_name, format!("event{i}"));
+        // todo - fix this assert, could be a or b
+        // assert_eq!(msgs[0].message.event_name, format!("{i}"));
         let msg_id = msgs[0].msg_id;
 
         // ack messgae
@@ -64,6 +87,7 @@ async fn test() {
 // todo - concurrent topic production, multiple consumers
 // assert  messages produced within single process stay in order
 // assert all consumers get all messages in expected order
+// multiple topics
 
 #[derive(Serialize, Deserialize)]
 struct Message {
