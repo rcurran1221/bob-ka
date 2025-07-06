@@ -40,6 +40,9 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         Err(e) => panic!("unable to open consumer statedb: {e}"),
     };
 
+    let recovered = consumer_state_db.was_recovered();
+    println!("consumer_state_db recovered: {recovered}");
+
     let shared_state = Arc::new(AppState {
         topic_db_map,
         consumer_state_db,
@@ -172,7 +175,6 @@ async fn consume_handler(
     };
 
     let state_key = format!("{topic_name}-{consumer_id}");
-    // todo - is there a get or insert function?
     let next_msg = match state.consumer_state_db.get(&state_key) {
         Ok(msg_id_opt) => match msg_id_opt {
             Some(msg_id) => msg_id,
@@ -210,8 +212,6 @@ async fn consume_handler(
                         return None;
                     }
                 };
-
-                println!("{value}");
 
                 Some(Message {
                     msg_id: u64::from_be_bytes(vec_as_array),

@@ -28,6 +28,7 @@ async fn test() {
                 .json(&Message {
                     event_name: format!("{producer_name}{i}").to_string(),
                     event_data: "this is data".to_string(),
+                    event_num: i,
                 })
                 .send()
                 .await
@@ -47,6 +48,7 @@ async fn test() {
                 .json(&Message {
                     event_name: format!("{producer_name}{i}").to_string(),
                     event_data: "this is data".to_string(),
+                    event_num: i,
                 })
                 .send()
                 .await
@@ -56,6 +58,8 @@ async fn test() {
         }
     });
 
+    let mut last_a_msg = 0;
+    let mut last_b_msg = 0;
     for i in 0..5 {
         let client = Client::new();
         let consume_resp = client
@@ -69,8 +73,13 @@ async fn test() {
         println!("{resp_body}");
         let msgs: Vec<Event> = serde_json::from_str(&resp_body).unwrap();
         assert_eq!(msgs.len(), 1);
-        // todo - fix this assert, could be a or b
-        // assert_eq!(msgs[0].message.event_name, format!("{i}"));
+        if msgs[0].message.event_name.contains("a") {
+            assert!(msgs[0].message.event_num >= last_a_msg);
+            last_a_msg += 1;
+        } else {
+            assert!(msgs[0].message.event_num >= last_b_msg);
+            last_b_msg += 1;
+        }
         let msg_id = msgs[0].msg_id;
 
         // ack messgae
@@ -93,6 +102,7 @@ async fn test() {
 struct Message {
     event_data: String,
     event_name: String,
+    event_num: u16,
 }
 
 #[derive(Serialize, Deserialize)]
