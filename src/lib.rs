@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse};
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
@@ -165,12 +165,16 @@ async fn produce_handler(
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<Message>>, StatusCode> {
+    // ) -> Result<Json<Vec<Message>>, StatusCode> {
+) -> impl IntoResponse {
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
             println!("topic not found: {topic_name}");
-            return Err(StatusCode::NOT_FOUND);
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
+            );
         }
     };
 
@@ -187,11 +191,14 @@ async fn consume_handler(
         },
         Err(error) => {
             println!("error reading from consumer state db: {error}");
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "Internal server error" })),
+            );
         }
     };
 
-    let messages: Vec<Message> = topic_db
+    let events: Vec<Message> = topic_db
         .range(next_msg..)
         .take(batch_size as usize)
         .filter_map(|e| match e {
@@ -214,8 +221,8 @@ async fn consume_handler(
                 };
 
                 Some(Message {
-                    msg_id: u64::from_be_bytes(vec_as_array),
-                    message: serde_json::from_str(&value).unwrap(),
+                    id: u64::from_be_bytes(vec_as_array),
+                    data: serde_json::from_str(&value).unwrap(),
                 })
             }
             Err(err) => {
@@ -225,7 +232,17 @@ async fn consume_handler(
         })
         .collect();
 
-    Ok(Json(messages))
+    if events.is_empty() {
+        return (
+            StatusCode::NO_CONTENT,
+            Json(json!({ "events": [] })),
+        );
+    } else {
+        return (
+            StatusCode::OK,
+            Json(json!({ "events": events })),
+        );
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -247,8 +264,8 @@ pub struct TopicConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Message {
-    msg_id: u64,
-    message: serde_json::Value,
+    id: u64,
+    data: serde_json::Value,
 }
 
 struct AppState {

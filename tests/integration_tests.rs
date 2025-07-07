@@ -58,9 +58,53 @@ async fn test() {
         }
     });
 
+    tokio::spawn(async {
+        let mut last_a_msg = 0;
+        let mut last_b_msg = 0;
+        for _ in 0..15 {
+            let client = Client::new();
+            let consume_resp = client
+                .get("http://localhost:1234/consume/test-topic/abc/1")
+                .send()
+                .await
+                .unwrap();
+
+            if consume_resp.status() == StatusCode::NO_CONTENT {
+                if last_b_msg < 5 || last_a_msg < 5 {
+                    assert!(
+                        false,
+                        "got no content but additional messages exist: b state: {last_b_msg}, a state: {last_a_msg}"
+                    );
+                };
+                continue;
+            }
+            let resp_body = consume_resp.text().await.unwrap();
+            println!("{resp_body}");
+            let msgs: Events<Message> = serde_json::from_str(&resp_body).unwrap();
+            assert_eq!(msgs.events.len(), 1);
+            if msgs.events[0].data.event_name.contains("a") {
+                assert!(msgs.events[0].data.event_num >= last_a_msg);
+                last_a_msg += 1;
+            } else {
+                assert!(msgs.events[0].data.event_num >= last_b_msg);
+                last_b_msg += 1;
+            }
+            let msg_id = msgs.events[0].id;
+
+            // ack messgae
+            let ack_resp = client
+                .post(format!("http://localhost:1234/ack/test-topic/abc/{msg_id}"))
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(ack_resp.status(), StatusCode::OK);
+        }
+    });
+
     let mut last_a_msg = 0;
     let mut last_b_msg = 0;
-    for i in 0..5 {
+    for _ in 0..15 {
         let client = Client::new();
         let consume_resp = client
             .get("http://localhost:1234/consume/test-topic/123/1")
@@ -68,19 +112,27 @@ async fn test() {
             .await
             .unwrap();
 
-        assert_eq!(consume_resp.status(), StatusCode::OK);
+        if consume_resp.status() == StatusCode::NO_CONTENT {
+            if last_b_msg < 5 || last_a_msg < 5 {
+                assert!(
+                    false,
+                    "got no content but additional messages exist: b state: {last_b_msg}, a state: {last_a_msg}"
+                );
+            };
+            continue;
+        }
         let resp_body = consume_resp.text().await.unwrap();
         println!("{resp_body}");
-        let msgs: Vec<Event> = serde_json::from_str(&resp_body).unwrap();
-        assert_eq!(msgs.len(), 1);
-        if msgs[0].message.event_name.contains("a") {
-            assert!(msgs[0].message.event_num >= last_a_msg);
+        let msgs: Events<Message> = serde_json::from_str(&resp_body).unwrap();
+        assert_eq!(msgs.events.len(), 1);
+        if msgs.events[0].data.event_name.contains("a") {
+            assert!(msgs.events[0].data.event_num >= last_a_msg);
             last_a_msg += 1;
         } else {
-            assert!(msgs[0].message.event_num >= last_b_msg);
+            assert!(msgs.events[0].data.event_num >= last_b_msg);
             last_b_msg += 1;
         }
-        let msg_id = msgs[0].msg_id;
+        let msg_id = msgs.events[0].id;
 
         // ack messgae
         let ack_resp = client
@@ -93,9 +145,6 @@ async fn test() {
     }
 }
 
-// todo - concurrent topic production, multiple consumers
-// assert  messages produced within single process stay in order
-// assert all consumers get all messages in expected order
 // multiple topics
 
 #[derive(Serialize, Deserialize)]
@@ -106,7 +155,12 @@ struct Message {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Event {
-    msg_id: u64,
-    message: Message,
+struct Event<T> {
+    id: u64,
+    data: T,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Events<T> {
+    events: Vec<Event<T>>,
 }
