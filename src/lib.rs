@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::response::{IntoResponse};
+use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
@@ -10,18 +10,21 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
-// how to document apis? solidfy 
+// how to document apis? solidfy
 // retention policy implementenation
+//  keep track of number of records as kvp, trim when exceeding that length
+//  need to use a merge operator? this means seperate "tree" for topic length and other stats?
 // use tracing package?
 // expose text/event-stream api?
+// implement ivec to and from u64 functions
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
     for topic in config.topics.iter() {
         println!("found topic: {}", topic.name);
         println!("enable compression: {}", topic.compression);
-        if topic.name == "consumer-state" {
-            panic!("cannot have a topic named consumer-state");
+        if topic.name == "consumer_state" {
+            panic!("cannot have a topic named consumer_state");
         }
         let config = Config::new()
             .use_compression(topic.compression)
@@ -34,6 +37,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         if topic_db_map.contains_key(&topic.name) {
             panic!("topic name: {} declared twice", topic.name)
         }
+
         topic_db_map.insert(topic.name.clone(), db);
     }
 
@@ -163,13 +167,42 @@ async fn produce_handler(
         }
     }
 
+    let topic_length = match topic_db.update_and_fetch("topic_length", increment) {
+        Ok(l) => match l {
+            Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
+            None => 0,
+        },
+        Err(e) => {
+            println!("error reading topic_length for {topic_name}: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("error reading topic_length")})),
+            );
+        }
+    };
+
+    // if topic length longer than retention, trim first n messages to bring it back into tolerance
+    // where to get retention policy? another key on the database
+
     (StatusCode::OK, Json(json!({"messageId": id})))
+}
+
+fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    let number = match old {
+        Some(bytes) => {
+            let array: [u8; 8] = bytes.try_into().unwrap();
+            let number = u64::from_be_bytes(array);
+            number + 1
+        }
+        None => 0,
+    };
+
+    Some(number.to_be_bytes().to_vec())
 }
 
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
-    // ) -> Result<Json<Vec<Message>>, StatusCode> {
 ) -> impl IntoResponse {
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
@@ -237,15 +270,9 @@ async fn consume_handler(
         .collect();
 
     if events.is_empty() {
-        return (
-            StatusCode::NO_CONTENT,
-            Json(json!({ "events": [] })),
-        );
+        return (StatusCode::NO_CONTENT, Json(json!({ "events": [] })));
     } else {
-        return (
-            StatusCode::OK,
-            Json(json!({ "events": events })),
-        );
+        return (StatusCode::OK, Json(json!({ "events": events })));
     }
 }
 
