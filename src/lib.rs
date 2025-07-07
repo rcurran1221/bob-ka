@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
+// todo - use tracing package?
+// how to document apis?
+// retention policy implementenation
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
