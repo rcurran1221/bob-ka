@@ -10,9 +10,10 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
-// todo - use tracing package?
-// how to document apis?
+// how to document apis? solidfy 
 // retention policy implementenation
+// use tracing package?
+// expose text/event-stream api?
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
@@ -263,6 +264,7 @@ pub struct WebServerConfig {
 pub struct TopicConfig {
     pub name: String,
     pub compression: bool,
+    pub cap: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

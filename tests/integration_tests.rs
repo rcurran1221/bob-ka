@@ -3,6 +3,10 @@ use hyper::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+//test tokio
+// batch size greater than 1
+// multiple topics, msgs remain isolated
+// retention once implemented
 #[tokio::test]
 async fn test() {
     // start web server on background task
@@ -12,6 +16,7 @@ async fn test() {
             topics: vec![TopicConfig {
                 name: "test-topic".to_string(),
                 compression: true,
+                cap: 0,
             }],
         })
         .await
@@ -144,8 +149,6 @@ async fn test() {
         assert_eq!(ack_resp.status(), StatusCode::OK);
     }
 }
-
-// multiple topics
 
 #[derive(Serialize, Deserialize)]
 struct Message {
