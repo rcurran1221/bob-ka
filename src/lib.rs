@@ -195,6 +195,8 @@ async fn produce_handler(
         }
     };
 
+    // start trans
+
     match topic_db
         .topic_tree
         .insert(id.to_be_bytes(), payload_as_bytes)
@@ -226,8 +228,11 @@ async fn produce_handler(
         }
     };
 
-    // if topic length longer than retention, trim first n messages to bring it back into tolerance
-    // where to get retention policy? another key on the database
+
+    // if topic_length > cap + tolerance(N) (maybe 5? maybe configurable)
+    // remove N oldest messages
+
+    // end trans 
 
     (StatusCode::OK, Json(json!({"messageId": id})))
 }
