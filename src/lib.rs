@@ -5,11 +5,11 @@ use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
-use sled::Transactional;
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
+use std::u64;
 
 // how to document apis? solidfy
 // retention policy implementenation
@@ -31,11 +31,11 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         let topic_name = topic.name.clone();
         let topic_compression = topic.compression;
         let topic_temporary = topic.temporary;
-        let config = Config::new()
+        let sled_config = Config::new()
             .use_compression(topic.compression)
             .path(topic.name.clone())
             .temporary(topic.temporary);
-        let db: Db = match config.open() {
+        let db: Db = match sled_config.open() {
             Ok(db) => db,
             Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
         };
@@ -62,9 +62,15 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             ),
         };
 
+        match stats_tree.insert("topic_cap", from_u64(topic.cap)) {
+            Ok(_) => {}
+            Err(e) => println!("failed to insert topic_cap: {e}"),
+        };
+
         let bob_topic = BobTopic {
             topic_tree: topic_tree,
             stats_tree: stats_tree,
+            top_db: db,
         };
 
         topic_db_map.insert(topic.name.clone(), bob_topic);
@@ -159,7 +165,7 @@ async fn produce_handler(
         }
     };
 
-    let id = match topic_db.generate_id() {
+    let id = match topic_db.top_db.generate_id() {
         Ok(id) => id,
         Err(e) => {
             println!(
@@ -189,8 +195,10 @@ async fn produce_handler(
         }
     };
 
-
-    match topic_db.topic_tree.insert(id.to_be_bytes(), payload_as_bytes) {
+    match topic_db
+        .topic_tree
+        .insert(id.to_be_bytes(), payload_as_bytes)
+    {
         Ok(_) => println!("successfully produced message: {id} for topic: {topic_name}"),
         Err(e) => {
             println!("error inserting payload: {e}");
@@ -201,7 +209,10 @@ async fn produce_handler(
         }
     }
 
-    let topic_length = match topic_db.stats_tree.update_and_fetch("topic_length", increment) {
+    let topic_length = match topic_db
+        .stats_tree
+        .update_and_fetch("topic_length", increment)
+    {
         Ok(l) => match l {
             Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
             None => 0,
@@ -311,6 +322,19 @@ async fn consume_handler(
     }
 }
 
+// todo - use these in program
+// maybe extend From implementation of IVec and u64?
+fn from_u64(input: u64) -> IVec {
+    IVec::from(&input.to_be_bytes())
+}
+
+fn to_u64(input: IVec) -> Option<u64> {
+    match input.to_vec().try_into() {
+        Ok(i) => return Some(u64::from_be_bytes(i)),
+        Err(_) => return None,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BobConfig {
     pub web_config: WebServerConfig,
@@ -347,6 +371,7 @@ struct ErrorResponse {
 }
 
 pub struct BobTopic {
+    pub top_db: Db,
     pub topic_tree: Tree,
     pub stats_tree: Tree,
 }
