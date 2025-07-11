@@ -17,6 +17,7 @@ async fn test() {
                 name: "test-topic".to_string(),
                 compression: true,
                 cap: 0,
+                temporary: true,
             }],
         })
         .await

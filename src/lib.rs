@@ -5,7 +5,8 @@ use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
-use sled::{Config, Db, IVec};
+use sled::Transactional;
+use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
@@ -26,9 +27,14 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         if topic.name == "consumer_state" {
             panic!("cannot have a topic named consumer_state");
         }
+
+        let topic_name = topic.name.clone();
+        let topic_compression = topic.compression;
+        let topic_temporary = topic.temporary;
         let config = Config::new()
             .use_compression(topic.compression)
-            .path(topic.name.clone());
+            .path(topic.name.clone())
+            .temporary(topic.temporary);
         let db: Db = match config.open() {
             Ok(db) => db,
             Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
@@ -38,7 +44,34 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             panic!("topic name: {} declared twice", topic.name)
         }
 
-        topic_db_map.insert(topic.name.clone(), db);
+        let topic_tree = match db.open_tree("topic") {
+            Ok(t) => t,
+            Err(e) => panic!(
+                "unable to open topic tree for topic:{}, error:{}",
+                topic.name.clone(),
+                e
+            ),
+        };
+
+        let stats_tree = match db.open_tree("stats") {
+            Ok(t) => t,
+            Err(e) => panic!(
+                "unable to open stats tree for topic:{}, error:{}",
+                topic.name.clone(),
+                e
+            ),
+        };
+
+        let bob_topic = BobTopic {
+            topic_tree: topic_tree,
+            stats_tree: stats_tree,
+        };
+
+        topic_db_map.insert(topic.name.clone(), bob_topic);
+
+        println!(
+            "successfully created db for topic: {topic_name}, compression: {topic_compression}, temporary: {topic_temporary} "
+        )
     }
 
     println!("opening consumer state db");
@@ -156,7 +189,8 @@ async fn produce_handler(
         }
     };
 
-    match topic_db.insert(id.to_be_bytes(), payload_as_bytes) {
+
+    match topic_db.topic_tree.insert(id.to_be_bytes(), payload_as_bytes) {
         Ok(_) => println!("successfully produced message: {id} for topic: {topic_name}"),
         Err(e) => {
             println!("error inserting payload: {e}");
@@ -167,7 +201,7 @@ async fn produce_handler(
         }
     }
 
-    let topic_length = match topic_db.update_and_fetch("topic_length", increment) {
+    let topic_length = match topic_db.stats_tree.update_and_fetch("topic_length", increment) {
         Ok(l) => match l {
             Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
             None => 0,
@@ -236,6 +270,7 @@ async fn consume_handler(
     };
 
     let events: Vec<Message> = topic_db
+        .topic_tree
         .range(next_msg..)
         .take(batch_size as usize)
         .filter_map(|e| match e {
@@ -292,6 +327,7 @@ pub struct TopicConfig {
     pub name: String,
     pub compression: bool,
     pub cap: u64,
+    pub temporary: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -301,12 +337,16 @@ struct Message {
 }
 
 struct AppState {
-    topic_db_map: HashMap<String, Db>,
+    topic_db_map: HashMap<String, BobTopic>,
     consumer_state_db: Db,
-    // todo - statistics db?
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct ErrorResponse {
     message: String,
+}
+
+pub struct BobTopic {
+    pub topic_tree: Tree,
+    pub stats_tree: Tree,
 }
