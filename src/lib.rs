@@ -8,6 +8,7 @@ use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
+use std::intrinsics::atomic_umin_seqcst;
 use std::sync::Arc;
 use std::u64;
 
@@ -24,6 +25,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     for topic in config.topics.iter() {
         println!("found topic: {}", topic.name);
         println!("enable compression: {}", topic.compression);
+
         if topic.name == "consumer_state" {
             panic!("cannot have a topic named consumer_state");
         }
@@ -31,10 +33,12 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         let topic_name = topic.name.clone();
         let topic_compression = topic.compression;
         let topic_temporary = topic.temporary;
+
         let sled_config = Config::new()
             .use_compression(topic.compression)
             .path(topic.name.clone())
             .temporary(topic.temporary);
+
         let db: Db = match sled_config.open() {
             Ok(db) => db,
             Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
@@ -65,6 +69,11 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         match stats_tree.insert("topic_cap", from_u64(topic.cap)) {
             Ok(_) => {}
             Err(e) => println!("failed to insert topic_cap: {e}"),
+        };
+
+        match stats_tree.insert("topic_cap_tolerance", from_u64(topic.cap_tolerance)) {
+            Ok(_) => {}
+            Err(e) => println!("failed to insert topic_cap_tolerance: {e}"),
         };
 
         let bob_topic = BobTopic {
@@ -228,11 +237,46 @@ async fn produce_handler(
         }
     };
 
+    let topic_cap = match topic_db.stats_tree.get("topic_cap") {
+        Ok(c) => match c {
+            Some(c) => match to_u64(c) {
+                Some(c) => c,
+                None => 0,
+            },
+            None => 0,
+        }
+        Err(e) => {
+            println!("failed to read topic_cap: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("error reading topic_catp")})));
+        }
+    };
 
+    let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
+        Ok(c) => match c {
+            Some(c) => match to_u64(c) {
+                Some(c) => c,
+                None => 0,
+            },
+            None => 0,
+        }
+        Err(e) => {
+            println!("failed to read topic_cap_tolerance: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("error reading topic_cap_tolerance")})));
+        }
+    };
+
+    if topic_length > (topic_cap + topic_cap_tolerance) {
+        topic_db.topic_tree.range(..).take(topic_length - topic_cap).for_each(|item| => {
+            topic_db.topic_tree.remove(item);
+        });
+
+    }
     // if topic_length > cap + tolerance(N) (maybe 5? maybe configurable)
     // remove N oldest messages
 
-    // end trans 
+    // end trans
 
     (StatusCode::OK, Json(json!({"messageId": id})))
 }
@@ -356,6 +400,7 @@ pub struct TopicConfig {
     pub name: String,
     pub compression: bool,
     pub cap: u64,
+    pub cap_tolerance: u64,
     pub temporary: bool,
 }
 
