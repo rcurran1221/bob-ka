@@ -290,9 +290,10 @@ async fn produce_handler(
             });
     }
 
-    (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
-        Ok()
-    });
+    // todo - figure out tran
+    // (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
+    //     // Ok(())
+    // });
     // end trans
 
     (StatusCode::OK, Json(json!({"messageId": id})))
