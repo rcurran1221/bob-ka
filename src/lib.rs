@@ -278,22 +278,59 @@ async fn produce_handler(
             .for_each(|item| {
                 let item = match item {
                     Ok(i) => i,
-                    Err(e) => {
-                        println!("failed to read msg for topic: {}", topic_name);
+                    Err(_) => {
+                        println!("failed to read msg for topic: {topic_name}");
                         // what does this return to?
                         return;
                     }
                 };
-                if let Err(e) = topic_db.topic_tree.remove(item.0) {
-                    println!("failed to remove item from topic: {}", topic_name)
+                if topic_db.topic_tree.remove(item.0).is_err() {
+                    println!("failed to remove item from topic: {topic_name}");
                 }
             });
     }
 
     // todo - figure out tran
-    // (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
-    //     // Ok(())
-    // });
+    (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
+        topic_db
+            .topic_tree
+            .insert(id.to_be_bytes(), payload_as_bytes)?;
+
+        let topic_length = match topic_db
+            .stats_tree
+            .update_and_fetch("topic_length", increment)?
+        {
+            Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
+            None => 0,
+        };
+
+        let topic_cap = match topic_db.stats_tree.get("topic_cap")? {
+            Some(c) => match to_u64(c) {
+                Some(c) => c,
+                None => 0,
+            },
+            None => 0,
+        };
+
+        let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance")? {
+            Some(c) => match to_u64(c) {
+                Some(c) => c,
+                None => 0,
+            },
+            None => 0,
+        };
+
+        if topic_length > (topic_cap + topic_cap_tolerance) {
+            topic_db
+                .topic_tree
+                .range::<&[u8], _>(..)
+                .take((topic_length - topic_cap) as usize)
+                .filter_map(|item| match item { Ok(i) => Some(i), Err(e)=> None})
+                .map(|item| {
+                    topic_db.topic_tree.remove(item.0)
+                });
+        }
+    });
     // end trans
 
     (StatusCode::OK, Json(json!({"messageId": id})))
