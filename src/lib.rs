@@ -305,31 +305,34 @@ async fn produce_handler(
         };
 
         let topic_cap = match topic_db.stats_tree.get("topic_cap")? {
-            Some(c) => match to_u64(c) {
-                Some(c) => c,
-                None => 0,
-            },
-            None => 0,
+            Some(c) => to_u64(c),
+            None => None,
         };
 
         let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance")? {
-            Some(c) => match to_u64(c) {
-                Some(c) => c,
-                None => 0,
-            },
-            None => 0,
+            Some(c) => to_u64(c),
+            None => None,
         };
 
-        if topic_length > (topic_cap + topic_cap_tolerance) {
-            topic_db
+        if let Some(cap) = topic_cap
+            && let Some(tolerance) = topic_cap_tolerance
+            && cap > (cap + tolerance)
+        {
+            for item in topic_db
                 .topic_tree
                 .range::<&[u8], _>(..)
-                .take((topic_length - topic_cap) as usize)
-                .filter_map(|item| match item { Ok(i) => Some(i), Err(e)=> None})
-                .map(|item| {
-                    topic_db.topic_tree.remove(item.0)
-                });
+                .take((topic_length - cap) as usize)
+                .filter_map(|item| match item {
+                    Ok(i) => Some(i),
+                    Err(e) => None,
+                })
+            {
+                if let Err(e) = topic_db.topic_tree.remove(item.0) {
+                    println!("failed to remove an item from the tree for topic: {topic_name}")
+                }
+            }
         }
+        Ok(())
     });
     // end trans
 
