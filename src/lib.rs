@@ -5,9 +5,10 @@ use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
-use sled::{Config, Db, IVec, Transactional, Tree};
+use sled::transaction::ConflictableTransactionError;
+use sled::{transaction, Config, Db, IVec, Transactional, Tree};
 use std::collections::HashMap;
-use std::error::Error;
+use std::error::{self, Error};
 use std::sync::Arc;
 use std::u64;
 
@@ -173,131 +174,121 @@ async fn produce_handler(
         }
     };
 
-    let id = match topic_db.top_db.generate_id() {
-        Ok(id) => id,
-        Err(e) => {
-            println!(
-                "encountered error when trying to generate id for topic: {topic_name}, error: {e}"
-            );
-            // todo - struct for error responses
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("unable to generate id for topic: {}", topic_name)})),
-            );
-        }
-    };
-
-    println!("got payload {payload}");
-    let payload_as_bytes = match to_vec(&payload) {
-        Ok(p) => p,
-        Err(e) => {
-            println!(
-                "encountered error when converting payload to vec for topic: {topic_name}, error: {e}"
-            );
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    json!({"error": format!("unable to convert payload to bytes for topic: {}", topic_name)}),
-                ),
-            );
-        }
-    };
 
     // start trans
 
-    match topic_db
-        .topic_tree
-        .insert(id.to_be_bytes(), payload_as_bytes)
-    {
-        Ok(_) => println!("successfully produced message: {id} for topic: {topic_name}"),
-        Err(e) => {
-            println!("error inserting payload: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("error inserting payload: {}", e)})),
-            );
-        }
-    }
-
-    let topic_length = match topic_db
-        .stats_tree
-        .update_and_fetch("topic_length", increment)
-    {
-        Ok(l) => match l {
-            Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
-            None => 0,
-        },
-        Err(e) => {
-            println!("error reading topic_length for {topic_name}: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("error reading topic_length")})),
-            );
-        }
-    };
-
-    let topic_cap = match topic_db.stats_tree.get("topic_cap") {
-        Ok(c) => match c {
-            Some(c) => match to_u64(c) {
-                Some(c) => c,
-                None => 0,
-            },
-            None => 0,
-        },
-        Err(e) => {
-            println!("failed to read topic_cap: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("error reading topic_catp")})),
-            );
-        }
-    };
-
-    let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
-        Ok(c) => match c {
-            Some(c) => match to_u64(c) {
-                Some(c) => c,
-                None => 0,
-            },
-            None => 0,
-        },
-        Err(e) => {
-            println!("failed to read topic_cap_tolerance: {}", e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("error reading topic_cap_tolerance")})),
-            );
-        }
-    };
-
-    if topic_length > (topic_cap + topic_cap_tolerance) {
-        topic_db
-            .topic_tree
-            .range::<&[u8], _>(..)
-            .take((topic_length - topic_cap) as usize)
-            .for_each(|item| {
-                let item = match item {
-                    Ok(i) => i,
-                    Err(_) => {
-                        println!("failed to read msg for topic: {topic_name}");
-                        // what does this return to?
-                        return;
-                    }
-                };
-                if topic_db.topic_tree.remove(item.0).is_err() {
-                    println!("failed to remove item from topic: {topic_name}");
-                }
-            });
-    }
+    // match topic_db
+    //     .topic_tree
+    //     .insert(id.to_be_bytes(), payload_as_bytes)
+    // {
+    //     Ok(_) => println!("successfully produced message: {id} for topic: {topic_name}"),
+    //     Err(e) => {
+    //         println!("error inserting payload: {e}");
+    //         return (
+    //             StatusCode::INTERNAL_SERVER_ERROR,
+    //             Json(json!({"error": format!("error inserting payload: {}", e)})),
+    //         );
+    //     }
+    // }
+    //
+    // let topic_length = match topic_db
+    //     .stats_tree
+    //     .update_and_fetch("topic_length", increment)
+    // {
+    //     Ok(l) => match l {
+    //         Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
+    //         None => 0,
+    //     },
+    //     Err(e) => {
+    //         println!("error reading topic_length for {topic_name}: {e}");
+    //         return (
+    //             StatusCode::INTERNAL_SERVER_ERROR,
+    //             Json(json!({"error": format!("error reading topic_length")})),
+    //         );
+    //     }
+    // };
+    //
+    // let topic_cap = match topic_db.stats_tree.get("topic_cap") {
+    //     Ok(c) => match c {
+    //         Some(c) => match to_u64(c) {
+    //             Some(c) => c,
+    //             None => 0,
+    //         },
+    //         None => 0,
+    //     },
+    //     Err(e) => {
+    //         println!("failed to read topic_cap: {}", e);
+    //         return (
+    //             StatusCode::INTERNAL_SERVER_ERROR,
+    //             Json(json!({"error": format!("error reading topic_catp")})),
+    //         );
+    //     }
+    // };
+    //
+    // let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
+    //     Ok(c) => match c {
+    //         Some(c) => match to_u64(c) {
+    //             Some(c) => c,
+    //             None => 0,
+    //         },
+    //         None => 0,
+    //     },
+    //     Err(e) => {
+    //         println!("failed to read topic_cap_tolerance: {}", e);
+    //         return (
+    //             StatusCode::INTERNAL_SERVER_ERROR,
+    //             Json(json!({"error": format!("error reading topic_cap_tolerance")})),
+    //         );
+    //     }
+    // };
+    //
+    // if topic_length > (topic_cap + topic_cap_tolerance) {
+    //     topic_db
+    //         .topic_tree
+    //         .range::<&[u8], _>(..)
+    //         .take((topic_length - topic_cap) as usize)
+    //         .for_each(|item| {
+    //             let item = match item {
+    //                 Ok(i) => i,
+    //                 Err(_) => {
+    //                     println!("failed to read msg for topic: {topic_name}");
+    //                     // what does this return to?
+    //                     return;
+    //                 }
+    //             };
+    //             if topic_db.topic_tree.remove(item.0).is_err() {
+    //                 println!("failed to remove item from topic: {topic_name}");
+    //             }
+    //         });
+    // }
 
     // todo - figure out tran
-    (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
+    let transaction_result = (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
+        let payload_as_bytes = match to_vec(&payload) {
+            Ok(p) => p,
+            Err(e) => {
+                println!(
+                    "encountered error when converting payload to vec for topic: {topic_name}, error: {e}"
+                );
+                return Err(ConflictableTransactionError::Abort(()));
+            }
+        };
+
+        let id = match topic.generate_id() {
+            Ok(id) => id,
+            Err(e) => {
+                println!(
+                    "encountered error when trying to generate id for topic: {topic_name}, error: {e}"
+                );
+                return Err(ConflictableTransactionError::Abort(()));
+            }
+        };
+
         topic_db
             .topic_tree
             .insert(id.to_be_bytes(), payload_as_bytes)?;
 
-        let topic_length = match topic_db
-            .stats_tree
+        let topic_length = match stats
             .update_and_fetch("topic_length", increment)?
         {
             Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
@@ -316,27 +307,37 @@ async fn produce_handler(
 
         if let Some(cap) = topic_cap
             && let Some(tolerance) = topic_cap_tolerance
-            && cap > (cap + tolerance)
+            && topic_length > (cap + tolerance)
         {
             for item in topic_db
                 .topic_tree
                 .range::<&[u8], _>(..)
                 .take((topic_length - cap) as usize)
-                .filter_map(|item| match item {
-                    Ok(i) => Some(i),
-                    Err(e) => None,
-                })
             {
-                if let Err(e) = topic_db.topic_tree.remove(item.0) {
-                    println!("failed to remove an item from the tree for topic: {topic_name}")
+                match item {
+                    Ok(i) => {
+                        if topic_db.topic_tree.remove(i.0).is_err() {
+                            println!(
+                                "failed to remove an item from the tree for topic: {topic_name}"
+                            )
+                        }
+                    }
+                    Err(_) => {
+                        println!("error reading item for topic: {topic_name}");
+                    }
                 }
             }
         }
         Ok(())
     });
-    // end trans
 
-    (StatusCode::OK, Json(json!({"messageId": id})))
+    match transaction_result {
+        Ok(_) => (StatusCode::OK, Json(json!({"messageId": "tbd"}))),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "error executing produce transaction" })),
+        ),
+    }
 }
 
 fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
