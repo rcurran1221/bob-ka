@@ -5,11 +5,9 @@ use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
-use sled::{Config, Db, IVec, Tree};
+use sled::{Config, Db, IVec, Transactional, Tree};
 use std::collections::HashMap;
 use std::error::Error;
-use std::intrinsics::atomic_umin_seqcst;
-use std::ops::RangeBounds;
 use std::sync::Arc;
 use std::u64;
 
@@ -78,8 +76,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         };
 
         let bob_topic = BobTopic {
-            topic_tree: topic_tree,
-            stats_tree: stats_tree,
+            topic_tree,
+            stats_tree,
             top_db: db,
         };
 
@@ -245,11 +243,13 @@ async fn produce_handler(
                 None => 0,
             },
             None => 0,
-        }
+        },
         Err(e) => {
             println!("failed to read topic_cap: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("error reading topic_catp")})));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("error reading topic_catp")})),
+            );
         }
     };
 
@@ -260,29 +260,39 @@ async fn produce_handler(
                 None => 0,
             },
             None => 0,
-        }
+        },
         Err(e) => {
             println!("failed to read topic_cap_tolerance: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("error reading topic_cap_tolerance")})));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": format!("error reading topic_cap_tolerance")})),
+            );
         }
     };
 
     if topic_length > (topic_cap + topic_cap_tolerance) {
-        topic_db.topic_tree.range(ops::Bound::Unbounded..ops::Bound::Unbounded ).take((topic_length - topic_cap) as usize).for_each(|item| {
-            let item = match item {
-                Ok(i) => i,
-                Err(e) => {
-                    println!("failed to read msg for topic: {}", topic_name);
-                    // what does this return to?
-                    return;
+        topic_db
+            .topic_tree
+            .range::<&[u8], _>(..)
+            .take((topic_length - topic_cap) as usize)
+            .for_each(|item| {
+                let item = match item {
+                    Ok(i) => i,
+                    Err(e) => {
+                        println!("failed to read msg for topic: {}", topic_name);
+                        // what does this return to?
+                        return;
+                    }
+                };
+                if let Err(e) = topic_db.topic_tree.remove(item.0) {
+                    println!("failed to remove item from topic: {}", topic_name)
                 }
-            };
-            if let Err(e) =  topic_db.topic_tree.remove(item.0) {
-                println!("failed to remove item from topic: {}", topic_name)
-            }
-        });
+            });
     }
+
+    (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
+        Ok()
+    });
     // end trans
 
     (StatusCode::OK, Json(json!({"messageId": id})))
@@ -319,7 +329,7 @@ async fn consume_handler(
     let state_key = format!("{topic_name}-{consumer_id}");
     let next_msg = match state.consumer_state_db.get(&state_key) {
         Ok(msg_id_opt) => match msg_id_opt {
-            Some(msg_i
+            Some(msg_i) => msg_i,
             None => {
                 println!(
                     "consumer-state db did not contain an entry for {state_key}, setting to 0"
