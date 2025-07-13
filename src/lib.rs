@@ -9,6 +9,7 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::intrinsics::atomic_umin_seqcst;
+use std::ops::RangeBounds;
 use std::sync::Arc;
 use std::u64;
 
@@ -268,14 +269,20 @@ async fn produce_handler(
     };
 
     if topic_length > (topic_cap + topic_cap_tolerance) {
-        topic_db.topic_tree.range(..).take(topic_length - topic_cap).for_each(|item| => {
-            topic_db.topic_tree.remove(item);
+        topic_db.topic_tree.range(ops::Bound::Unbounded..ops::Bound::Unbounded ).take((topic_length - topic_cap) as usize).for_each(|item| {
+            let item = match item {
+                Ok(i) => i,
+                Err(e) => {
+                    println!("failed to read msg for topic: {}", topic_name);
+                    // what does this return to?
+                    return;
+                }
+            };
+            if let Err(e) =  topic_db.topic_tree.remove(item.0) {
+                println!("failed to remove item from topic: {}", topic_name)
+            }
         });
-
     }
-    // if topic_length > cap + tolerance(N) (maybe 5? maybe configurable)
-    // remove N oldest messages
-
     // end trans
 
     (StatusCode::OK, Json(json!({"messageId": id})))
@@ -312,7 +319,7 @@ async fn consume_handler(
     let state_key = format!("{topic_name}-{consumer_id}");
     let next_msg = match state.consumer_state_db.get(&state_key) {
         Ok(msg_id_opt) => match msg_id_opt {
-            Some(msg_id) => msg_id,
+            Some(msg_i
             None => {
                 println!(
                     "consumer-state db did not contain an entry for {state_key}, setting to 0"
