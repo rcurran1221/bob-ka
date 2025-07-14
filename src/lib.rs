@@ -6,9 +6,10 @@ use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::transaction::ConflictableTransactionError;
-use sled::{transaction, Config, Db, IVec, Transactional, Tree};
+use sled::{Config, Db, IVec, Transactional, Tree, transaction};
 use std::collections::HashMap;
 use std::error::{self, Error};
+use std::os::linux::raw::stat;
 use std::sync::Arc;
 use std::u64;
 
@@ -174,7 +175,6 @@ async fn produce_handler(
         }
     };
 
-
     // start trans
 
     // match topic_db
@@ -288,11 +288,15 @@ async fn produce_handler(
             .topic_tree
             .insert(id.to_be_bytes(), payload_as_bytes)?;
 
-        let topic_length = match stats
-            .update_and_fetch("topic_length", increment)?
-        {
-            Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
-            None => 0,
+        let topic_length = match stats.get("topic_length")? {
+            Some(l) => match to_u64(l) {
+                Some(l) => {
+                    stats.insert("topic_length", from_u64(l+1))?;
+                    l+1
+                }
+                None => 1
+            }
+            None => 1
         };
 
         let topic_cap = match topic_db.stats_tree.get("topic_cap")? {
@@ -301,31 +305,18 @@ async fn produce_handler(
         };
 
         let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance")? {
-            Some(c) => to_u64(c),
-            None => None,
+            Some(c) => to_u64(c).unwrap_or_default(),
+            None => 0,
         };
 
+        // lenght out of tolerance, trim n oldest, if topic_cap is some
         if let Some(cap) = topic_cap
-            && let Some(tolerance) = topic_cap_tolerance
-            && topic_length > (cap + tolerance)
+            && topic_length > (cap + topic_cap_tolerance)
         {
-            for item in topic_db
-                .topic_tree
-                .range::<&[u8], _>(..)
-                .take((topic_length - cap) as usize)
-            {
-                match item {
-                    Ok(i) => {
-                        if topic_db.topic_tree.remove(i.0).is_err() {
-                            println!(
-                                "failed to remove an item from the tree for topic: {topic_name}"
-                            )
-                        }
-                    }
-                    Err(_) => {
-                        println!("error reading item for topic: {topic_name}");
-                    }
-                }
+            let n_oldest_items = topic_db.topic_tree.range::<&[u8], _>(..).take((topic_length - cap) as usize);
+
+            for item in n_oldest_items {
+                    topic_db.topic_tree.remove(item?.0)?;
             }
         }
         Ok(())
