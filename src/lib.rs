@@ -164,6 +164,7 @@ async fn produce_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    println!("got produce request for {topic_name}");
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
@@ -173,6 +174,8 @@ async fn produce_handler(
             );
         }
     };
+
+    println!("got topic db");
 
     // start trans
 
@@ -262,6 +265,7 @@ async fn produce_handler(
     // }
 
     let transaction_result = (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
+        println!("starting transaction");
         let payload_as_bytes = match to_vec(&payload) {
             Ok(p) => p,
             Err(e) => {
@@ -272,10 +276,13 @@ async fn produce_handler(
             }
         };
 
+        println!("generating id");
         let id = topic.generate_id()?;
 
-        topic_db.topic_tree.insert(id.to_be_bytes(), payload_as_bytes)?;
+        println!("inserting payload");
+        topic.insert(&id.to_be_bytes(), payload_as_bytes)?;
 
+        println!("getting topic length");
         let topic_length = match stats.get("topic_length")? {
             Some(l) => match to_u64(l) {
                 Some(l) => {
@@ -287,25 +294,27 @@ async fn produce_handler(
             None => 1
         };
 
-        let topic_cap = match topic_db.stats_tree.get("topic_cap")? {
+        let topic_cap = match stats.get("topic_cap")? {
             Some(c) => to_u64(c),
             None => None,
         };
 
-        let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance")? {
+        let topic_cap_tolerance = match stats.get("topic_cap_tolerance")? {
             Some(c) => to_u64(c).unwrap_or_default(),
             None => 0,
         };
 
+        println!("found topic_length: {topic_length}");
         // lenght out of tolerance, trim n oldest, if topic_cap is some
         if let Some(cap) = topic_cap
             && topic_length > (cap + topic_cap_tolerance)
         {
             println!("topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}");
+            // is ranging over the non-transactionTree going to be an issue for the transaction?
             let n_oldest_items = topic_db.topic_tree.range::<&[u8], _>(..).take((topic_length - cap) as usize);
 
             for item in n_oldest_items {
-                    topic_db.topic_tree.remove(item?.0)?;
+                    topic.remove(item?.0)?;
             }
         }
         Ok(id)
@@ -324,6 +333,7 @@ async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    println!("consuming for {topic_name} {consumer_id} {batch_size}");
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
