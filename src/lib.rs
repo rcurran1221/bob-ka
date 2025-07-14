@@ -286,13 +286,21 @@ async fn produce_handler(
         let topic_length = match stats.get("topic_length")? {
             Some(l) => match to_u64(l) {
                 Some(l) => {
+                    println!("getting topic length, to_u64 is some");
                     stats.insert("topic_length", from_u64(l+1))?;
                     l+1
                 }
-                None => 1
+                None => {
+                    println!("to_u64 is none?");
+                    1
+                }
+
             }
-            None => 1
-        };
+            None => {
+                stats.insert("topic_length", from_u64(1))?;
+                1
+            }
+        };  
 
         let topic_cap = match stats.get("topic_cap")? {
             Some(c) => to_u64(c),
@@ -310,14 +318,18 @@ async fn produce_handler(
             && topic_length > (cap + topic_cap_tolerance)
         {
             println!("topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}");
+
             // is ranging over the non-transactionTree going to be an issue for the transaction?
+            // i think this range needs to occur outside of the transaction,
+            // transactional tree offers no iter/range implmenetation
             let n_oldest_items = topic_db.topic_tree.range::<&[u8], _>(..).take((topic_length - cap) as usize);
 
             for item in n_oldest_items {
                     topic.remove(item?.0)?;
             }
         }
-        Ok(id)
+        // todo figure out how to manage transactions, 1 for the "write", 1 for the "trim"?
+        Ok((id, topic_length - cap))
     });
 
     match transaction_result {
