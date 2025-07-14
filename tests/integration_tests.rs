@@ -16,7 +16,8 @@ async fn test() {
             topics: vec![TopicConfig {
                 name: "test-topic".to_string(),
                 compression: true,
-                cap: 0,
+                cap: 10,
+                cap_tolerance: 1,
                 temporary: true,
             }],
         })
@@ -24,11 +25,13 @@ async fn test() {
         .unwrap();
     });
 
+    println!("here");
     // producer a
     tokio::spawn(async {
         let client = Client::new();
         let producer_name = "a";
         for i in 0..5 {
+            println!("producing {i} for {producer_name}");
             let produce_resp = client
                 .post("http://localhost:1234/produce/test-topic")
                 .json(&Message {
@@ -49,6 +52,7 @@ async fn test() {
         let client = Client::new();
         let producer_name = "b";
         for i in 0..5 {
+            println!("producing {i} for {producer_name}");
             let produce_resp = client
                 .post("http://localhost:1234/produce/test-topic")
                 .json(&Message {
@@ -67,7 +71,8 @@ async fn test() {
     tokio::spawn(async {
         let mut last_a_msg = 0;
         let mut last_b_msg = 0;
-        for _ in 0..15 {
+        for i in 0..15 {
+            println!("consuming {i} ");
             let client = Client::new();
             let consume_resp = client
                 .get("http://localhost:1234/consume/test-topic/abc/1")
@@ -77,9 +82,8 @@ async fn test() {
 
             if consume_resp.status() == StatusCode::NO_CONTENT {
                 if last_b_msg < 5 || last_a_msg < 5 {
-                    assert!(
-                        false,
-                        "got no content but additional messages exist: b state: {last_b_msg}, a state: {last_a_msg}"
+                    panic!(
+                        "got no content but additional messages exist: b state: {last_b_msg}, a state: {last_a_msg}",
                     );
                 };
                 continue;
@@ -120,8 +124,7 @@ async fn test() {
 
         if consume_resp.status() == StatusCode::NO_CONTENT {
             if last_b_msg < 5 || last_a_msg < 5 {
-                assert!(
-                    false,
+                panic!(
                     "got no content but additional messages exist: b state: {last_b_msg}, a state: {last_a_msg}"
                 );
             };

@@ -1,1 +1,5 @@
 /target
+/consumer_state/
+/consumer-state/
+/test-topic/
+/test_topic/

@@ -301,6 +301,7 @@ async fn produce_handler(
         if let Some(cap) = topic_cap
             && topic_length > (cap + topic_cap_tolerance)
         {
+            println!("topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}");
             let n_oldest_items = topic_db.topic_tree.range::<&[u8], _>(..).take((topic_length - cap) as usize);
 
             for item in n_oldest_items {
