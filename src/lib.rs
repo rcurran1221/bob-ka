@@ -8,8 +8,7 @@ use serde_json::{json, to_vec};
 use sled::transaction::ConflictableTransactionError;
 use sled::{Config, Db, IVec, Transactional, Tree, transaction};
 use std::collections::HashMap;
-use std::error::{self, Error};
-use std::os::linux::raw::stat;
+use std::error::Error;
 use std::sync::Arc;
 use std::u64;
 
@@ -262,7 +261,6 @@ async fn produce_handler(
     //         });
     // }
 
-    // todo - figure out tran
     let transaction_result = (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
         let payload_as_bytes = match to_vec(&payload) {
             Ok(p) => p,
@@ -274,19 +272,9 @@ async fn produce_handler(
             }
         };
 
-        let id = match topic.generate_id() {
-            Ok(id) => id,
-            Err(e) => {
-                println!(
-                    "encountered error when trying to generate id for topic: {topic_name}, error: {e}"
-                );
-                return Err(ConflictableTransactionError::Abort(()));
-            }
-        };
+        let id = topic.generate_id()?;
 
-        topic_db
-            .topic_tree
-            .insert(id.to_be_bytes(), payload_as_bytes)?;
+        topic_db.topic_tree.insert(id.to_be_bytes(), payload_as_bytes)?;
 
         let topic_length = match stats.get("topic_length")? {
             Some(l) => match to_u64(l) {
@@ -319,29 +307,16 @@ async fn produce_handler(
                     topic_db.topic_tree.remove(item?.0)?;
             }
         }
-        Ok(())
+        Ok(id)
     });
 
     match transaction_result {
-        Ok(_) => (StatusCode::OK, Json(json!({"messageId": "tbd"}))),
+        Ok(msg_id) => (StatusCode::OK, Json(json!({"messageId": msg_id}))),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "error executing produce transaction" })),
         ),
     }
-}
-
-fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
-    let number = match old {
-        Some(bytes) => {
-            let array: [u8; 8] = bytes.try_into().unwrap();
-            let number = u64::from_be_bytes(array);
-            number + 1
-        }
-        None => 0,
-    };
-
-    Some(number.to_be_bytes().to_vec())
 }
 
 async fn consume_handler(
@@ -415,9 +390,9 @@ async fn consume_handler(
         .collect();
 
     if events.is_empty() {
-        return (StatusCode::NO_CONTENT, Json(json!({ "events": [] })));
+        (StatusCode::NO_CONTENT, Json(json!({ "events": [] })))
     } else {
-        return (StatusCode::OK, Json(json!({ "events": events })));
+        (StatusCode::OK, Json(json!({ "events": events })))
     }
 }
 
@@ -429,8 +404,8 @@ fn from_u64(input: u64) -> IVec {
 
 fn to_u64(input: IVec) -> Option<u64> {
     match input.to_vec().try_into() {
-        Ok(i) => return Some(u64::from_be_bytes(i)),
-        Err(_) => return None,
+        Ok(i) => Some(u64::from_be_bytes(i)),
+        Err(_) => None,
     }
 }
 
