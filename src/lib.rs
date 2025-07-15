@@ -5,20 +5,16 @@ use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
-use sled::transaction::ConflictableTransactionError;
-use sled::{Config, Db, IVec, Transactional, Tree, transaction};
+use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use std::u64;
 
 // how to document apis? solidfy
 // retention policy implementenation
 //  keep track of number of records as kvp, trim when exceeding that length
-//  need to use a merge operator? this means seperate "tree" for topic length and other stats?
 // use tracing package?
 // expose text/event-stream api?
-// implement ivec to and from u64 functions
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
@@ -77,8 +73,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         };
 
         let bob_topic = BobTopic {
-            topic_tree,
             stats_tree,
+            topic_tree,
             top_db: db,
         };
 
@@ -264,83 +260,175 @@ async fn produce_handler(
     //         });
     // }
 
-    let transaction_result = (&topic_db.topic_tree, &topic_db.stats_tree).transaction(|(topic, stats)| {
-        println!("starting transaction");
-        let payload_as_bytes = match to_vec(&payload) {
-            Ok(p) => p,
-            Err(e) => {
-                println!(
-                    "encountered error when converting payload to vec for topic: {topic_name}, error: {e}"
-                );
-                return Err(ConflictableTransactionError::Abort(()));
-            }
-        };
-
-        println!("generating id");
-        let id = topic.generate_id()?;
-
-        println!("inserting payload");
-        topic.insert(&id.to_be_bytes(), payload_as_bytes)?;
-
-        println!("getting topic length");
-        let topic_length = match stats.get("topic_length")? {
-            Some(l) => match to_u64(l) {
-                Some(l) => {
-                    println!("getting topic length, to_u64 is some");
-                    stats.insert("topic_length", from_u64(l+1))?;
-                    l+1
-                }
-                None => {
-                    println!("to_u64 is none?");
-                    1
-                }
-
-            }
-            None => {
-                stats.insert("topic_length", from_u64(1))?;
-                1
-            }
-        };  
-
-        let topic_cap = match stats.get("topic_cap")? {
-            Some(c) => to_u64(c),
-            None => None,
-        };
-
-        let topic_cap_tolerance = match stats.get("topic_cap_tolerance")? {
-            Some(c) => to_u64(c).unwrap_or_default(),
-            None => 0,
-        };
-
-        println!("found topic_length: {topic_length}");
-        // lenght out of tolerance, trim n oldest, if topic_cap is some
-        if let Some(cap) = topic_cap
-            && topic_length > (cap + topic_cap_tolerance)
-        {
-            println!("topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}");
-
-            // is ranging over the non-transactionTree going to be an issue for the transaction?
-            // i think this range needs to occur outside of the transaction,
-            // transactional tree offers no iter/range implmenetation
-            let n_oldest_items = topic_db.topic_tree.range::<&[u8], _>(..).take((topic_length - cap) as usize);
-
-            for item in n_oldest_items {
-                    topic.remove(item?.0)?;
-            }
+    let payload_as_bytes = match to_vec(&payload) {
+        Ok(p) => p,
+        Err(e) => {
+            println!(
+                "encountered error when converting payload to vec for topic: {topic_name}, error: {e}"
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!("error: unable to convert json to bytes")),
+            );
         }
-        // todo figure out how to manage transactions, 1 for the "write", 1 for the "trim"?
-        Ok((id, topic_length - cap))
-    });
+    };
 
-    match transaction_result {
-        Ok(msg_id) => (StatusCode::OK, Json(json!({"messageId": msg_id}))),
+    println!("generating id");
+    let id = match topic_db.top_db.generate_id() {
+        Ok(id) => id,
+        Err(e) => {
+            println!("failed to generate id: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!("error: unable to generate id")),
+            );
+        }
+    };
+    println!("inserting payload");
+    let resp = match topic_db
+        .topic_tree
+        .insert(id.to_be_bytes(), payload_as_bytes)
+    {
+        Ok(_) => (StatusCode::OK, Json(json!({"messageId": id}))),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "error executing produce transaction" })),
         ),
+    };
+
+    println!("updating topic length");
+    let topic_length = match topic_db
+        .stats_tree
+        .update_and_fetch("topic_length", increment)
+    {
+        Ok(l) => match l {
+            Some(l) => l,
+            None => {
+                println!("received none topic length after increment");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!("error: unable to get topic length")),
+                );
+            }
+        },
+        Err(e) => {
+            println!("error getting topic length: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!("error: unable to get topic length")),
+            );
+        }
+    };
+
+    let topic_cap = match topic_db.stats_tree.get("topic_cap") {
+        Ok(c) => match c {
+            Some(c) => to_u64(c),
+            None => None,
+        },
+        Err(e) => {
+            println!("unable to get topic cap for: {topic_name}, error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!("error: error reading topic cap")),
+            );
+        }
+    };
+
+    let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
+        Ok(ct) => match ct {
+            Some(c) => to_u64(c).unwrap_or_default(),
+            None => 0,
+        },
+        Err(e) => {
+            println!("unable to read topic cap tolerance for: {topic_name}, error: {e}");
+            0
+        }
+    };
+
+    // // lenght out of tolerance, trim n oldest, if topic_cap is some
+    if let Some(cap) = topic_cap
+        && let Some(topic_length) = to_u64(topic_length) // todo, probably want logging here
+        && topic_length > (cap + topic_cap_tolerance)
+    {
+        println!(
+            "topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}"
+        );
+
+        let n_oldest_items = topic_db
+            .topic_tree
+            .iter()
+            .take((topic_length - cap) as usize)
+            .filter_map(|item| item.ok());
+
+        let mut batch = sled::Batch::default();
+        for item in n_oldest_items {
+            batch.remove(item.0);
+        }
+        if topic_db.topic_tree.apply_batch(batch).is_err() {
+            println!("apply batch failed when triming")
+        };
+        // topic_db.topic_tree.pop_min()
+        // could also be pop_min n times?
+        println!("successfully trimmed topic");
+        // decrease topic_length?
+        println!("updating topic length");
+        let topic_length = match topic_db
+            .stats_tree
+            .update_and_fetch("topic_length", decrement)
+        {
+            Ok(l) => match l {
+                Some(l) => l,
+                None => {
+                    println!("received none topic length after increment");
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!("error: unable to get topic length")),
+                    );
+                }
+            },
+            Err(e) => {
+                println!("error getting topic length: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!("error: unable to get topic length")),
+                );
+            }
+        };
+
+        println!(
+            "decremented topic: {topic_name} to {}",
+            to_u64(topic_length).unwrap_or_default()
+        );
     }
+
+    resp
 }
 
+fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    let number = match old {
+        Some(bytes) => {
+            let array: [u8; 8] = bytes.try_into().unwrap();
+            let number = u64::from_be_bytes(array);
+            number + 1
+        }
+        None => 1,
+    };
+
+    Some(number.to_be_bytes().to_vec())
+}
+
+fn decrement(old: Option<&[u8]>) -> Option<Vec<u8>> {
+    let number = match old {
+        Some(bytes) => {
+            let array: [u8; 8] = bytes.try_into().unwrap();
+            let number = u64::from_be_bytes(array);
+            number - 1
+        }
+        None => 0,
+    };
+
+    Some(number.to_be_bytes().to_vec())
+}
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
