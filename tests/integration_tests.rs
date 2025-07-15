@@ -3,21 +3,19 @@ use hyper::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-//test tokio
-// batch size greater than 1
 // multiple topics, msgs remain isolated
-// retention once implemented
 #[tokio::test]
-async fn test() {
+async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
     // start web server on background task
     tokio::task::spawn(async {
         bob_ka::start_web_server(BobConfig {
+            temp_consumer_state: true,
             web_config: WebServerConfig { port: 1234 },
             topics: vec![TopicConfig {
                 name: "test-topic".to_string(),
                 compression: true,
-                cap: 10,
-                cap_tolerance: 1,
+                cap: 0,
+                cap_tolerance: 0,
                 temporary: true,
             }],
         })
@@ -27,7 +25,7 @@ async fn test() {
 
     println!("here");
     // producer a
-    tokio::spawn(async {
+    let a_handle = tokio::spawn(async {
         let client = Client::new();
         let producer_name = "a";
         for i in 0..20 {
@@ -45,12 +43,10 @@ async fn test() {
 
             assert_eq!(produce_resp.status(), StatusCode::OK);
         }
-    })
-    .await
-    .unwrap();
+    });
 
     // producer b
-    tokio::spawn(async {
+    let b_handle = tokio::spawn(async {
         let client = Client::new();
         let producer_name = "b";
         for i in 0..20 {
@@ -68,9 +64,9 @@ async fn test() {
 
             assert_eq!(produce_resp.status(), StatusCode::OK);
         }
-    })
-    .await
-    .unwrap();
+    });
+
+    let (_, _) = tokio::join!(a_handle, b_handle);
 
     tokio::spawn(async {
         let mut last_a_msg = 0;
@@ -158,6 +154,76 @@ async fn test() {
     }
 }
 
+#[tokio::test]
+async fn test_multiproducer_topic_cap_observed() {
+    tokio::task::spawn(async {
+        bob_ka::start_web_server(BobConfig {
+            temp_consumer_state: true,
+            web_config: WebServerConfig { port: 1234 },
+            topics: vec![TopicConfig {
+                name: "test-topic".to_string(),
+                compression: true,
+                cap: 10,
+                cap_tolerance: 5,
+                temporary: true,
+            }],
+        })
+        .await
+        .unwrap();
+    });
+
+    println!("here");
+    // producer a
+    let a_handle = tokio::spawn(async {
+        let client = Client::new();
+        let producer_name = "a";
+        for i in 0..50 {
+            println!("producing {i} for {producer_name}");
+            let produce_resp = client
+                .post("http://localhost:1234/produce/test-topic")
+                .json(&Message {
+                    event_name: format!("{producer_name}{i}").to_string(),
+                    event_data: "this is data".to_string(),
+                    event_num: i,
+                })
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(produce_resp.status(), StatusCode::OK);
+        }
+    });
+
+    // producer b
+    let b_handle = tokio::spawn(async {
+        let client = Client::new();
+        let producer_name = "b";
+        for i in 0..50 {
+            println!("producing {i} for {producer_name}");
+            let produce_resp = client
+                .post("http://localhost:1234/produce/test-topic")
+                .json(&Message {
+                    event_name: format!("{producer_name}{i}").to_string(),
+                    event_data: "this is data".to_string(),
+                    event_num: i,
+                })
+                .send()
+                .await
+                .unwrap();
+
+            assert_eq!(produce_resp.status(), StatusCode::OK);
+        }
+    });
+
+    let (_, _) = tokio::join!(a_handle, b_handle);
+}
+
+#[tokio::test]
+async fn test_consumer_batch_size() {
+    // produce some messages
+    // consume with batch size N
+    // enumerate and ack each successfully
+}
 #[derive(Serialize, Deserialize)]
 struct Message {
     event_data: String,

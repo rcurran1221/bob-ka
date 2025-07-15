@@ -87,7 +87,11 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     println!("opening consumer state db");
 
-    let consumer_state_db: Db = match sled::open("consumer_state") {
+    let consumer_state_config = Config::new()
+        .path("consumer_state")
+        .temporary(config.temp_consumer_state);
+    
+    let consumer_state_db: Db = match consumer_state_config.open() {
         Ok(db) => db,
         Err(e) => panic!("unable to open consumer statedb: {e}"),
     };
@@ -173,93 +177,6 @@ async fn produce_handler(
 
     println!("got topic db");
 
-    // start trans
-
-    // match topic_db
-    //     .topic_tree
-    //     .insert(id.to_be_bytes(), payload_as_bytes)
-    // {
-    //     Ok(_) => println!("successfully produced message: {id} for topic: {topic_name}"),
-    //     Err(e) => {
-    //         println!("error inserting payload: {e}");
-    //         return (
-    //             StatusCode::INTERNAL_SERVER_ERROR,
-    //             Json(json!({"error": format!("error inserting payload: {}", e)})),
-    //         );
-    //     }
-    // }
-    //
-    // let topic_length = match topic_db
-    //     .stats_tree
-    //     .update_and_fetch("topic_length", increment)
-    // {
-    //     Ok(l) => match l {
-    //         Some(l) => u64::from_be_bytes(l.to_vec().try_into().unwrap()),
-    //         None => 0,
-    //     },
-    //     Err(e) => {
-    //         println!("error reading topic_length for {topic_name}: {e}");
-    //         return (
-    //             StatusCode::INTERNAL_SERVER_ERROR,
-    //             Json(json!({"error": format!("error reading topic_length")})),
-    //         );
-    //     }
-    // };
-    //
-    // let topic_cap = match topic_db.stats_tree.get("topic_cap") {
-    //     Ok(c) => match c {
-    //         Some(c) => match to_u64(c) {
-    //             Some(c) => c,
-    //             None => 0,
-    //         },
-    //         None => 0,
-    //     },
-    //     Err(e) => {
-    //         println!("failed to read topic_cap: {}", e);
-    //         return (
-    //             StatusCode::INTERNAL_SERVER_ERROR,
-    //             Json(json!({"error": format!("error reading topic_catp")})),
-    //         );
-    //     }
-    // };
-    //
-    // let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
-    //     Ok(c) => match c {
-    //         Some(c) => match to_u64(c) {
-    //             Some(c) => c,
-    //             None => 0,
-    //         },
-    //         None => 0,
-    //     },
-    //     Err(e) => {
-    //         println!("failed to read topic_cap_tolerance: {}", e);
-    //         return (
-    //             StatusCode::INTERNAL_SERVER_ERROR,
-    //             Json(json!({"error": format!("error reading topic_cap_tolerance")})),
-    //         );
-    //     }
-    // };
-    //
-    // if topic_length > (topic_cap + topic_cap_tolerance) {
-    //     topic_db
-    //         .topic_tree
-    //         .range::<&[u8], _>(..)
-    //         .take((topic_length - topic_cap) as usize)
-    //         .for_each(|item| {
-    //             let item = match item {
-    //                 Ok(i) => i,
-    //                 Err(_) => {
-    //                     println!("failed to read msg for topic: {topic_name}");
-    //                     // what does this return to?
-    //                     return;
-    //                 }
-    //             };
-    //             if topic_db.topic_tree.remove(item.0).is_err() {
-    //                 println!("failed to remove item from topic: {topic_name}");
-    //             }
-    //         });
-    // }
-
     let payload_as_bytes = match to_vec(&payload) {
         Ok(p) => p,
         Err(e) => {
@@ -284,7 +201,7 @@ async fn produce_handler(
             );
         }
     };
-    println!("inserting payload");
+    println!("inserting payload for id: {id}");
     let resp = match topic_db
         .topic_tree
         .insert(id.to_be_bytes(), payload_as_bytes)
@@ -346,13 +263,16 @@ async fn produce_handler(
     };
 
     // // lenght out of tolerance, trim n oldest, if topic_cap is some
-    if let Some(cap) = topic_cap
+    if let Some(cap) = topic_cap && cap > 0
         && let Some(topic_length) = to_u64(topic_length) // todo, probably want logging here
         && topic_length > (cap + topic_cap_tolerance)
     {
         println!(
             "topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}"
         );
+
+        let t = topic_length - cap;
+        println!("attempting to remove {t} oldest items");
 
         let n_oldest_items = topic_db
             .topic_tree
@@ -362,11 +282,16 @@ async fn produce_handler(
 
         let mut batch = sled::Batch::default();
         for item in n_oldest_items {
+            println!(
+                "deleting key: {}",
+                to_u64(item.0.clone()).unwrap_or_default()
+            );
             batch.remove(item.0);
         }
         if topic_db.topic_tree.apply_batch(batch).is_err() {
             println!("apply batch failed when triming")
         };
+        assert_eq!(topic_db.topic_tree.len() as u64, cap); // todo remove
         // topic_db.topic_tree.pop_min()
         // could also be pop_min n times?
         println!("successfully trimmed topic");
@@ -374,7 +299,7 @@ async fn produce_handler(
         println!("updating topic length");
         let topic_length = match topic_db
             .stats_tree
-            .update_and_fetch("topic_length", decrement)
+            .update_and_fetch("topic_length", |old| decrement(t, old))
         {
             Ok(l) => match l {
                 Some(l) => l,
@@ -417,12 +342,12 @@ fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
     Some(number.to_be_bytes().to_vec())
 }
 
-fn decrement(old: Option<&[u8]>) -> Option<Vec<u8>> {
+fn decrement(n: u64, old: Option<&[u8]>) -> Option<Vec<u8>> {
     let number = match old {
         Some(bytes) => {
             let array: [u8; 8] = bytes.try_into().unwrap();
             let number = u64::from_be_bytes(array);
-            number - 1
+            number - n
         }
         None => 0,
     };
@@ -524,6 +449,7 @@ fn to_u64(input: IVec) -> Option<u64> {
 pub struct BobConfig {
     pub web_config: WebServerConfig,
     pub topics: Vec<TopicConfig>,
+    pub temp_consumer_state: bool,
 }
 
 #[derive(Debug, Deserialize)]
