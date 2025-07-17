@@ -9,15 +9,13 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use tracing::{Level, event, instrument, span};
+use tracing::{Level, event, span};
 
-// how to document apis? solidfy
-// retention policy implementenation
-//  keep track of number of records as kvp, trim when exceeding that length
 // use tracing package?
 // expose text/event-stream api?
+// make level of tracing a config point
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
-    let subscriber = tracing_subscriber::fmt().with_thread_ids(true).finish();
+    let subscriber = tracing_subscriber::fmt().with_thread_ids(true).compact().finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
     let span = span!(Level::INFO, "start web server");
@@ -218,7 +216,7 @@ async fn produce_handler(
     };
 
     event!(
-        Level::INFO,
+        Level::DEBUG,
         message = "successfully retrieved topic db",
         topic_name
     );
@@ -236,7 +234,7 @@ async fn produce_handler(
         }
     };
 
-    event!(Level::INFO, message = "generating id", topic_name);
+    event!(Level::DEBUG, message = "generating id", topic_name);
     let id = match topic_db.top_db.generate_id() {
         Ok(id) => id,
         Err(e) => {
@@ -248,7 +246,12 @@ async fn produce_handler(
         }
     };
 
-    event!(Level::INFO, message = "inserting payload", topic_name, id);
+    event!(
+        Level::DEBUG,
+        message = "inserting payload into topic tree",
+        topic_name,
+        id
+    );
     let resp = match topic_db
         .topic_tree
         .insert(id.to_be_bytes(), payload_as_bytes)
@@ -261,7 +264,7 @@ async fn produce_handler(
     };
 
     event!(
-        Level::INFO,
+        Level::DEBUG,
         message = "updating topic length state",
         topic_name
     );
@@ -288,7 +291,7 @@ async fn produce_handler(
         }
     };
 
-    event!(Level::INFO, message = "getting topic cap", topic_name);
+    event!(Level::DEBUG, message = "getting topic cap", topic_name);
     let topic_cap = match topic_db.stats_tree.get("topic_cap") {
         Ok(c) => match c {
             Some(c) => to_u64(c),
@@ -304,7 +307,7 @@ async fn produce_handler(
     };
 
     event!(
-        Level::INFO,
+        Level::DEBUG,
         message = "getting topic cap tolerance",
         topic_name
     );
@@ -325,7 +328,7 @@ async fn produce_handler(
         && topic_length > (cap + topic_cap_tolerance)
     {
         event!(
-            Level::INFO,
+            Level::DEBUG,
             message = "topic out of tolerance, triming",
             topic_name,
             topic_length,
@@ -349,10 +352,10 @@ async fn produce_handler(
             println!("apply batch failed when triming")
         };
 
-        event!(Level::INFO, message = "successfully trimmed topic", n_msgs);
+        event!(Level::DEBUG, message = "successfully trimmed topic", n_msgs);
 
         event!(
-            Level::INFO,
+            Level::DEBUG,
             message = "decrementing topic length for trimmed items"
         );
         assert_eq!(topic_db.topic_tree.len() as u64, cap); // todo remove
@@ -380,17 +383,23 @@ async fn produce_handler(
         };
 
         event!(
-            Level::INFO,
+            Level::DEBUG,
             message = "succesfully decremented topic state",
             topic_length = to_u64(topic_length).unwrap_or_default()
         );
     }
 
+    event!(
+        Level::INFO,
+        message = "successfully produced message",
+        topic_name,
+        id
+    );
+
     // return result from before triming
     resp
 }
 
-#[instrument]
 fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
     let number = match old {
         Some(bytes) => {
@@ -404,7 +413,6 @@ fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
     Some(number.to_be_bytes().to_vec())
 }
 
-#[instrument]
 fn decrement(n: u64, old: Option<&[u8]>) -> Option<Vec<u8>> {
     let number = match old {
         Some(bytes) => {
@@ -418,12 +426,20 @@ fn decrement(n: u64, old: Option<&[u8]>) -> Option<Vec<u8>> {
     Some(number.to_be_bytes().to_vec())
 }
 
-#[instrument]
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    println!("consuming for {topic_name} {consumer_id} {batch_size}");
+    let span = span!(Level::INFO, "consume handler");
+    let _enter = span.enter();
+    event!(
+        Level::INFO,
+        message = "got consume request",
+        topic_name,
+        consumer_id,
+        batch_size
+    );
+
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
@@ -490,7 +506,15 @@ async fn consume_handler(
         })
         .collect();
 
-    if events.is_empty() {
+    let n_events = events.len();
+    event!(
+        Level::INFO,
+        message = "successfully processed consume request",
+        topic_name,
+        consumer_id,
+        n_events
+    );
+    if n_events == 0 {
         (StatusCode::NO_CONTENT, Json(json!({ "events": [] })))
     } else {
         (StatusCode::OK, Json(json!({ "events": events })))

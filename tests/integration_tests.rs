@@ -29,7 +29,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
         let client = Client::new();
         let producer_name = "a";
         for i in 0..20 {
-            println!("producing {i} for {producer_name}");
+            // println!("producing {i} for {producer_name}");
             let produce_resp = client
                 .post("http://localhost:1234/produce/test-topic")
                 .json(&Message {
@@ -50,7 +50,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
         let client = Client::new();
         let producer_name = "b";
         for i in 0..20 {
-            println!("producing {i} for {producer_name}");
+            // println!("producing {i} for {producer_name}");
             let produce_resp = client
                 .post("http://localhost:1234/produce/test-topic")
                 .json(&Message {

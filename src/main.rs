@@ -8,7 +8,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // load the old config up
     let config: BobConfig = match fs::read_to_string("config.toml") {
         Ok(content) => from_str(&content).expect("unable to parse config into struct"),
-        Err(e) => panic!("cannot read config.toml!!: {}", e),
+        Err(e) => panic!("cannot read config.toml!!: {e}"),
     };
 
     let result = bob_ka::start_web_server(config).await;
