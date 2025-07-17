@@ -9,6 +9,7 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
+use tracing::{Level, event, instrument, span};
 
 // how to document apis? solidfy
 // retention policy implementenation
@@ -16,6 +17,13 @@ use std::sync::Arc;
 // use tracing package?
 // expose text/event-stream api?
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
+    let subscriber = tracing_subscriber::fmt().with_thread_ids(true).finish();
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    let span = span!(Level::INFO, "start web server");
+    let _enter = span.enter();
+    event!(Level::INFO, "starting web server...");
+
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
     for topic in config.topics.iter() {
@@ -80,30 +88,41 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
         topic_db_map.insert(topic.name.clone(), bob_topic);
 
-        println!(
-            "successfully created db for topic: {topic_name}, compression: {topic_compression}, temporary: {topic_temporary} "
+        event!(
+            Level::INFO,
+            message = "successfully created topic",
+            topic_name,
+            topic_compression,
+            topic_temporary
         )
     }
 
-    println!("opening consumer state db");
+    event!(Level::INFO, "opening consumer state db");
 
     let consumer_state_config = Config::new()
         .path("consumer_state")
         .temporary(config.temp_consumer_state);
-    
+
     let consumer_state_db: Db = match consumer_state_config.open() {
         Ok(db) => db,
         Err(e) => panic!("unable to open consumer statedb: {e}"),
     };
 
-    let recovered = consumer_state_db.was_recovered();
-    println!("consumer_state_db recovered: {recovered}");
+    event!(
+        Level::INFO,
+        message = "successfully opened consumer state db",
+        config.temp_consumer_state
+    );
 
     let shared_state = Arc::new(AppState {
         topic_db_map,
         consumer_state_db,
     });
 
+    drop(_enter); //exit config setup span
+
+    let web_server_span = span!(Level::INFO, "web request listener");
+    let _enter = web_server_span.enter();
     // Build the application with a route
     let app = Router::new()
         .route("/health", get(health))
@@ -120,7 +139,12 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     // Run the server
     let addr = format!("0.0.0.0:{}", config.web_config.port);
-    println!("listening at: {addr}");
+
+    event!(
+        Level::INFO,
+        message = "web server is listening",
+        address = addr
+    );
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 
@@ -133,6 +157,16 @@ async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    let span = span!(Level::INFO, "ack handler");
+    let _enter = span.enter();
+    event!(
+        Level::INFO,
+        message = "received ack request",
+        topic_name,
+        consumer_id,
+        ack_msg_id
+    );
+
     let state_key = &format!("{topic_name}-{consumer_id}");
     let new_consumer_state = ack_msg_id + 1;
 
@@ -152,8 +186,13 @@ async fn ack_handler(
         }
     };
 
-    println!(
-        "consumer state for {state_key} updated from {previous_consumer_state} to {new_consumer_state}"
+    event!(
+        Level::INFO,
+        message = "consumer state updated",
+        previous_consumer_state,
+        new_consumer_state,
+        topic_name,
+        consumer_id
     );
 
     StatusCode::OK
@@ -164,7 +203,10 @@ async fn produce_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    println!("got produce request for {topic_name}");
+    let span = span!(Level::INFO, "produce handler");
+    let _enter = span.enter();
+    event!(Level::INFO, message = "got produce request", topic_name);
+
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
@@ -175,7 +217,11 @@ async fn produce_handler(
         }
     };
 
-    println!("got topic db");
+    event!(
+        Level::INFO,
+        message = "successfully retrieved topic db",
+        topic_name
+    );
 
     let payload_as_bytes = match to_vec(&payload) {
         Ok(p) => p,
@@ -190,7 +236,7 @@ async fn produce_handler(
         }
     };
 
-    println!("generating id");
+    event!(Level::INFO, message = "generating id", topic_name);
     let id = match topic_db.top_db.generate_id() {
         Ok(id) => id,
         Err(e) => {
@@ -201,7 +247,8 @@ async fn produce_handler(
             );
         }
     };
-    println!("inserting payload for id: {id}");
+
+    event!(Level::INFO, message = "inserting payload", topic_name, id);
     let resp = match topic_db
         .topic_tree
         .insert(id.to_be_bytes(), payload_as_bytes)
@@ -213,7 +260,11 @@ async fn produce_handler(
         ),
     };
 
-    println!("updating topic length");
+    event!(
+        Level::INFO,
+        message = "updating topic length state",
+        topic_name
+    );
     let topic_length = match topic_db
         .stats_tree
         .update_and_fetch("topic_length", increment)
@@ -237,6 +288,7 @@ async fn produce_handler(
         }
     };
 
+    event!(Level::INFO, message = "getting topic cap", topic_name);
     let topic_cap = match topic_db.stats_tree.get("topic_cap") {
         Ok(c) => match c {
             Some(c) => to_u64(c),
@@ -251,6 +303,11 @@ async fn produce_handler(
         }
     };
 
+    event!(
+        Level::INFO,
+        message = "getting topic cap tolerance",
+        topic_name
+    );
     let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
         Ok(ct) => match ct {
             Some(c) => to_u64(c).unwrap_or_default(),
@@ -267,39 +324,41 @@ async fn produce_handler(
         && let Some(topic_length) = to_u64(topic_length) // todo, probably want logging here
         && topic_length > (cap + topic_cap_tolerance)
     {
-        println!(
-            "topic: {topic_name} is out of tolerance, length: {topic_length}, cap: {cap}, tolerance: {topic_cap_tolerance}"
+        event!(
+            Level::INFO,
+            message = "topic out of tolerance, triming",
+            topic_name,
+            topic_length,
+            topic_cap_tolerance
         );
 
-        let t = topic_length - cap;
-        println!("attempting to remove {t} oldest items");
+        let n_msgs = topic_length - cap;
 
         let n_oldest_items = topic_db
             .topic_tree
             .iter()
-            .take((topic_length - cap) as usize)
+            .take((n_msgs) as usize)
             .filter_map(|item| item.ok());
 
         let mut batch = sled::Batch::default();
         for item in n_oldest_items {
-            println!(
-                "deleting key: {}",
-                to_u64(item.0.clone()).unwrap_or_default()
-            );
             batch.remove(item.0);
         }
+
         if topic_db.topic_tree.apply_batch(batch).is_err() {
             println!("apply batch failed when triming")
         };
+
+        event!(Level::INFO, message = "successfully trimmed topic", n_msgs);
+
+        event!(
+            Level::INFO,
+            message = "decrementing topic length for trimmed items"
+        );
         assert_eq!(topic_db.topic_tree.len() as u64, cap); // todo remove
-        // topic_db.topic_tree.pop_min()
-        // could also be pop_min n times?
-        println!("successfully trimmed topic");
-        // decrease topic_length?
-        println!("updating topic length");
         let topic_length = match topic_db
             .stats_tree
-            .update_and_fetch("topic_length", |old| decrement(t, old))
+            .update_and_fetch("topic_length", |old| decrement(n_msgs, old))
         {
             Ok(l) => match l {
                 Some(l) => l,
@@ -320,15 +379,18 @@ async fn produce_handler(
             }
         };
 
-        println!(
-            "decremented topic: {topic_name} to {}",
-            to_u64(topic_length).unwrap_or_default()
+        event!(
+            Level::INFO,
+            message = "succesfully decremented topic state",
+            topic_length = to_u64(topic_length).unwrap_or_default()
         );
     }
 
+    // return result from before triming
     resp
 }
 
+#[instrument]
 fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
     let number = match old {
         Some(bytes) => {
@@ -342,6 +404,7 @@ fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
     Some(number.to_be_bytes().to_vec())
 }
 
+#[instrument]
 fn decrement(n: u64, old: Option<&[u8]>) -> Option<Vec<u8>> {
     let number = match old {
         Some(bytes) => {
@@ -354,6 +417,8 @@ fn decrement(n: u64, old: Option<&[u8]>) -> Option<Vec<u8>> {
 
     Some(number.to_be_bytes().to_vec())
 }
+
+#[instrument]
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
@@ -472,6 +537,7 @@ struct Message {
     data: serde_json::Value,
 }
 
+#[derive(Debug)]
 struct AppState {
     topic_db_map: HashMap<String, BobTopic>,
     consumer_state_db: Db,
@@ -482,6 +548,7 @@ struct ErrorResponse {
     message: String,
 }
 
+#[derive(Debug)]
 pub struct BobTopic {
     pub top_db: Db,
     pub topic_tree: Tree,
