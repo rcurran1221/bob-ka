@@ -514,6 +514,9 @@ async fn consume_handler(
         consumer_id,
         n_events
     );
+
+    // if n_events is zero, hold response for N seconds?
+    // or take a token, allow for N requests resulting in no events in X seconds
     if n_events == 0 {
         (StatusCode::NO_CONTENT, Json(json!({ "events": [] })))
     } else {
