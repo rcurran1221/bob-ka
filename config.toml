@@ -1,5 +1,7 @@
 title = "boblog config"
 
+temp_consumer_state = false
+
 [web_config]
 port = 8011
 
@@ -9,4 +11,5 @@ compression = true
 cap = 10
 cap_tolerance = 1
 temporary = false
+
 

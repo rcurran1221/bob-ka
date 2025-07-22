@@ -1,9 +1,107 @@
+use std::time::Duration;
+
 use bob_ka::{BobConfig, TopicConfig, WebServerConfig};
 use hyper::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tokio::time::Instant;
 
-// multiple topics, msgs remain isolated
+#[tokio::test]
+async fn test_quick_start() {
+    // hello, welcome to bob-ka
+    // this thing is a kafka inspired, lightweight, http/rest event thing
+    // messages are organized into topics
+    // each topic is N producer, N consumer
+    // topic length caps are configurable, are count based, and trim on write
+    // to deal with potentially tight consume loops, there is a server side sleep enforced when no
+    // new messages are available (backoff_dialation_ms)
+    // sled as the persistence layer, b+ tree/lsm tree read write perf in embedded db
+    // example client side app:
+
+    // start web server
+    tokio::task::spawn(async {
+        bob_ka::start_web_server(BobConfig {
+            temp_consumer_state: true, // for test purposes, key value store in memory only
+            web_config: WebServerConfig { port: 1234 },
+            topics: vec![TopicConfig {
+                name: "test-topic".to_string(),
+                compression: false,  // compress messages on disk
+                cap: None,           // topic length cap, in number of events
+                cap_tolerance: None, // amount you are willing to live with being over cap, so you
+                // can delete messages in batches, eg: cap = 10, tolerance = 2, length could be 12
+                // before trim
+                temporary: true, // for testing, keep key value stores in memory
+                backoff_dialation_ms: Some(100), // time to hold response server side when no new
+                                 // messages are available, to prevent consumption poll abuse
+            }],
+        })
+        .await
+        .unwrap();
+    });
+
+    let client = Client::new(); // use a single http client for pooling
+
+    // producer
+    // post request to /produce/{topic_name}
+    // "event" data is in the request body as json
+    // only single "event" generated per request
+    let produce_resp = client
+        .post("http://localhost:1234/produce/test-topic")
+        .json(&json!("data: event has occured!"))
+        .send()
+        .await
+        .unwrap();
+
+    // expect 200 OK if message persisted to topic successfully
+    assert_eq!(produce_resp.status(), StatusCode::OK);
+
+    // multiple producers can produce to same topic
+
+    // consumer
+    // get request to /consume/{topic_name}/{consumer_id}/{batch_size}
+    // consumer_id should be something unique, like a guid
+    let consume_resp = client
+        .get("http://localhost:1234/consume/test-topic/abc/2")
+        .send()
+        .await
+        .unwrap();
+
+    if consume_resp.status() == StatusCode::NO_CONTENT {
+        // no new messages for the consumer id = abc for topic "test-topic"
+        // server enforced a "backoff_dialation_ms" sleep to avoid
+        // tight looping consumers
+    } else if consume_resp.status() == StatusCode::OK {
+        // inspect body for "events"
+        // expect body of this schema:
+        // { events: [{id: 1, data: {prop1: "value1"}}, ..]}
+        // where you get an array of events, each event having two keys: id and data
+        // id is a sequence number assigned by the server
+        // data is the data you posted in your produce request
+        let msgs = consume_resp.json::<Events<Message>>().await.unwrap();
+        let msg_id = msgs.events[0].id;
+        let _data = &msgs.events[0].data;
+        // process your data, and once successful, send an ACK to the server for the ID
+
+        // ack messgae
+        // post request to ack/{topic_name}/{consumer_id}/{msg_id}
+        // server keeps track of where you are in the topic based on consumerid and last ack's
+        // message id
+        let ack_resp = client
+            .post(format!("http://localhost:1234/ack/test-topic/abc/{msg_id}"))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(ack_resp.status(), StatusCode::OK);
+    }
+    // run this consumer is a loop! poll, process, and ack messages at your own leisure, without
+    // worrying about abusive polling
+    //
+    // this solution is lightweight, kafka consumer/producer pattern inspried, with language
+    // agnostic http rest apis, allowing you to deliver messages reliably in any environment
+}
+
 #[tokio::test]
 async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
     // start web server on background task
@@ -14,9 +112,10 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
             topics: vec![TopicConfig {
                 name: "test-topic".to_string(),
                 compression: true,
-                cap: 0,
-                cap_tolerance: 0,
+                cap: None,
+                cap_tolerance: None,
                 temporary: true,
+                backoff_dialation_ms: None,
             }],
         })
         .await
@@ -163,9 +262,10 @@ async fn test_multiproducer_topic_cap_observed() {
             topics: vec![TopicConfig {
                 name: "test-topic".to_string(),
                 compression: true,
-                cap: 10,
-                cap_tolerance: 5,
+                cap: None,
+                cap_tolerance: None,
                 temporary: true,
+                backoff_dialation_ms: None,
             }],
         })
         .await
@@ -224,6 +324,40 @@ async fn test_consumer_batch_size() {
     // consume with batch size N
     // enumerate and ack each successfully
 }
+
+#[tokio::test]
+async fn test_backpressure_no_content() {
+    tokio::task::spawn(async {
+        bob_ka::start_web_server(BobConfig {
+            temp_consumer_state: true,
+            web_config: WebServerConfig { port: 1234 },
+            topics: vec![TopicConfig {
+                name: "test-topic".to_string(),
+                compression: true,
+                cap: None,
+                cap_tolerance: None,
+                temporary: true,
+                backoff_dialation_ms: Some(1000),
+            }],
+        })
+        .await
+        .unwrap();
+    });
+
+    let now = Instant::now();
+    let client = Client::new();
+    let consume_resp = client
+        .get("http://localhost:1234/consume/test-topic/abc/1")
+        .send()
+        .await
+        .unwrap();
+
+    let dur = Instant::now().duration_since(now);
+    assert_eq!(consume_resp.status(), StatusCode::NO_CONTENT);
+    print!("{}", dur.as_millis());
+    assert!(dur > Duration::from_millis(1000));
+}
+
 #[derive(Serialize, Deserialize)]
 struct Message {
     event_data: String,

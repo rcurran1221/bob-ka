@@ -9,13 +9,17 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use tracing::{Level, event, span};
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{event, info, span, Level};
 
 // use tracing package?
 // expose text/event-stream api?
-// make level of tracing a config point
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
-    let subscriber = tracing_subscriber::fmt().with_thread_ids(true).compact().finish();
+    let subscriber = tracing_subscriber::fmt()
+        .with_thread_ids(true)
+        .compact()
+        .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
     let span = span!(Level::INFO, "start web server");
@@ -25,8 +29,11 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
     for topic in config.topics.iter() {
-        println!("found topic: {}", topic.name);
-        println!("enable compression: {}", topic.compression);
+        info!("found topic: {}", topic.name);
+        info!("enable compression: {}", topic.compression);
+        info!("topic cap: {:?}", topic.cap);
+        info!("topic_cap_tolerance: {:?}", topic.cap_tolerance);
+        info!("backoff_dialation_ms: {:?}", topic.backoff_dialation_ms);
 
         if topic.name == "consumer_state" {
             panic!("cannot have a topic named consumer_state");
@@ -68,20 +75,11 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             ),
         };
 
-        match stats_tree.insert("topic_cap", from_u64(topic.cap)) {
-            Ok(_) => {}
-            Err(e) => println!("failed to insert topic_cap: {e}"),
-        };
-
-        match stats_tree.insert("topic_cap_tolerance", from_u64(topic.cap_tolerance)) {
-            Ok(_) => {}
-            Err(e) => println!("failed to insert topic_cap_tolerance: {e}"),
-        };
-
         let bob_topic = BobTopic {
             stats_tree,
             topic_tree,
             top_db: db,
+            topic_config: topic.clone(),
         };
 
         topic_db_map.insert(topic.name.clone(), bob_topic);
@@ -263,11 +261,6 @@ async fn produce_handler(
         ),
     };
 
-    event!(
-        Level::DEBUG,
-        message = "updating topic length state",
-        topic_name
-    );
     let topic_length = match topic_db
         .stats_tree
         .update_and_fetch("topic_length", increment)
@@ -291,41 +284,13 @@ async fn produce_handler(
         }
     };
 
-    event!(Level::DEBUG, message = "getting topic cap", topic_name);
-    let topic_cap = match topic_db.stats_tree.get("topic_cap") {
-        Ok(c) => match c {
-            Some(c) => to_u64(c),
-            None => None,
-        },
-        Err(e) => {
-            println!("unable to get topic cap for: {topic_name}, error: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!("error: error reading topic cap")),
-            );
-        }
-    };
+    let topic_cap = topic_db.topic_config.cap;
+    let topic_cap_tolerance = topic_db.topic_config.cap;
 
-    event!(
-        Level::DEBUG,
-        message = "getting topic cap tolerance",
-        topic_name
-    );
-    let topic_cap_tolerance = match topic_db.stats_tree.get("topic_cap_tolerance") {
-        Ok(ct) => match ct {
-            Some(c) => to_u64(c).unwrap_or_default(),
-            None => 0,
-        },
-        Err(e) => {
-            println!("unable to read topic cap tolerance for: {topic_name}, error: {e}");
-            0
-        }
-    };
-
-    // // lenght out of tolerance, trim n oldest, if topic_cap is some
-    if let Some(cap) = topic_cap && cap > 0
-        && let Some(topic_length) = to_u64(topic_length) // todo, probably want logging here
-        && topic_length > (cap + topic_cap_tolerance)
+    if let Some(cap) = topic_cap
+        && cap > 0
+        && let Some(topic_length) = to_u64(topic_length)
+        && topic_length > (cap + topic_cap_tolerance.unwrap_or_default())
     {
         event!(
             Level::DEBUG,
@@ -351,8 +316,6 @@ async fn produce_handler(
         if topic_db.topic_tree.apply_batch(batch).is_err() {
             println!("apply batch failed when triming")
         };
-
-        event!(Level::DEBUG, message = "successfully trimmed topic", n_msgs);
 
         event!(
             Level::DEBUG,
@@ -478,9 +441,9 @@ async fn consume_handler(
         .filter_map(|e| match e {
             Ok(e) => {
                 // if key from utf8 or value from utf8 err => return None
-                let vec_as_array: [u8; 8] = match e.0.to_vec().try_into() {
-                    Ok(v) => v,
-                    Err(_) => {
+                let key = match to_u64(e.0) {
+                    Some(v) => v,
+                    None => {
                         println!("failed to convert vec into [u8; 8]");
                         return None;
                     }
@@ -495,7 +458,7 @@ async fn consume_handler(
                 };
 
                 Some(Message {
-                    id: u64::from_be_bytes(vec_as_array),
+                    id: key,
                     data: serde_json::from_str(&value).unwrap(),
                 })
             }
@@ -518,16 +481,21 @@ async fn consume_handler(
     // if n_events is zero, hold response for N seconds?
     // or take a token, allow for N requests resulting in no events in X seconds
     if n_events == 0 {
+        if let Some(d) = topic_db.topic_config.backoff_dialation_ms {
+            sleep(Duration::from_millis(d)).await;
+            event!(
+                Level::INFO,
+                message = "just woke up",
+                sleep_ms = d,
+                topic_name,
+                consumer_id
+            );
+        }
+
         (StatusCode::NO_CONTENT, Json(json!({ "events": [] })))
     } else {
         (StatusCode::OK, Json(json!({ "events": events })))
     }
-}
-
-// todo - use these in program
-// maybe extend From implementation of IVec and u64?
-fn from_u64(input: u64) -> IVec {
-    IVec::from(&input.to_be_bytes())
 }
 
 fn to_u64(input: IVec) -> Option<u64> {
@@ -549,13 +517,14 @@ pub struct WebServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct TopicConfig {
     pub name: String,
     pub compression: bool,
-    pub cap: u64,
-    pub cap_tolerance: u64,
+    pub cap: Option<u64>,
+    pub cap_tolerance: Option<u64>,
     pub temporary: bool,
+    pub backoff_dialation_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -580,4 +549,5 @@ pub struct BobTopic {
     pub top_db: Db,
     pub topic_tree: Tree,
     pub stats_tree: Tree,
+    pub topic_config: TopicConfig,
 }
