@@ -8,8 +8,19 @@ port = 8011
 [[topics]]
 name = "test-topic"
 compression = true
-cap = 10
+cap = 100
 cap_tolerance = 1
 temporary = false
-
-
+[[topics]]
+name = "test-topic-cap"
+compression = true
+cap = 10
+cap_tolerance = 3
+temporary = false
+[[topics]]
+name = "test-topic-backpressure"
+compression = true
+cap = 10
+cap_tolerance = 3
+temporary = false
+backoff_dialation_ms = 1000

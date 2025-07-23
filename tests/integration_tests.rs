@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use bob_ka::{BobConfig, TopicConfig, WebServerConfig};
+use ::futures::future::join_all;
 use hyper::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -19,27 +19,6 @@ async fn test_quick_start() {
     // sled as the persistence layer, b+ tree/lsm tree read write perf in embedded db
     // example client side app:
 
-    // start web server
-    tokio::task::spawn(async {
-        bob_ka::start_web_server(BobConfig {
-            temp_consumer_state: true, // for test purposes, key value store in memory only
-            web_config: WebServerConfig { port: 1234 },
-            topics: vec![TopicConfig {
-                name: "test-topic".to_string(),
-                compression: false,  // compress messages on disk
-                cap: None,           // topic length cap, in number of events
-                cap_tolerance: None, // amount you are willing to live with being over cap, so you
-                // can delete messages in batches, eg: cap = 10, tolerance = 2, length could be 12
-                // before trim
-                temporary: true, // for testing, keep key value stores in memory
-                backoff_dialation_ms: Some(100), // time to hold response server side when no new
-                                 // messages are available, to prevent consumption poll abuse
-            }],
-        })
-        .await
-        .unwrap();
-    });
-
     let client = Client::new(); // use a single http client for pooling
 
     // producer
@@ -47,7 +26,7 @@ async fn test_quick_start() {
     // "event" data is in the request body as json
     // only single "event" generated per request
     let produce_resp = client
-        .post("http://localhost:1234/produce/test-topic")
+        .post("http://localhost:8011/produce/test-topic-quickstart")
         .json(&json!("data: event has occured!"))
         .send()
         .await
@@ -62,7 +41,7 @@ async fn test_quick_start() {
     // get request to /consume/{topic_name}/{consumer_id}/{batch_size}
     // consumer_id should be something unique, like a guid
     let consume_resp = client
-        .get("http://localhost:1234/consume/test-topic/abc/2")
+        .get("http://localhost:8011/consume/test-topic-quickstart/abc/2")
         .send()
         .await
         .unwrap();
@@ -88,41 +67,53 @@ async fn test_quick_start() {
         // server keeps track of where you are in the topic based on consumerid and last ack's
         // message id
         let ack_resp = client
-            .post(format!("http://localhost:1234/ack/test-topic/abc/{msg_id}"))
+            .post(format!(
+                "http://localhost:8011/ack/test-topic-quickstart/abc/{msg_id}"
+            ))
             .send()
             .await
             .unwrap();
 
         assert_eq!(ack_resp.status(), StatusCode::OK);
     }
-    // run this consumer is a loop! poll, process, and ack messages at your own leisure, without
+    // run this consumer in a loop! poll, process, and ack messages at your own leisure, without
     // worrying about abusive polling
     //
     // this solution is lightweight, kafka consumer/producer pattern inspried, with language
     // agnostic http rest apis, allowing you to deliver messages reliably in any environment
 }
 
-#[tokio::test]
-async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
-    // start web server on background task
-    tokio::task::spawn(async {
-        bob_ka::start_web_server(BobConfig {
-            temp_consumer_state: true,
-            web_config: WebServerConfig { port: 1234 },
-            topics: vec![TopicConfig {
-                name: "test-topic".to_string(),
-                compression: true,
-                cap: None,
-                cap_tolerance: None,
-                temporary: true,
-                backoff_dialation_ms: None,
-            }],
-        })
-        .await
-        .unwrap();
-    });
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+// #[tokio::test]
+async fn test_stress_test() {
+    let n_workers = 10;
+    let mut futures = vec![];
+    for n in 0..n_workers {
+        let handle = tokio::spawn(async move {
+            let client = Client::new();
+            for i in 0..10 {
+                let produce_resp = client
+                    .post("http://localhost:8011/produce/test-topic")
+                    .json(&Message {
+                        event_name: format!("{n}{i}").to_string(),
+                        event_data: "this is data".to_string(),
+                        event_num: i,
+                    })
+                    .send()
+                    .await
+                    .unwrap();
 
-    println!("here");
+                assert_eq!(produce_resp.status(), StatusCode::OK);
+            }
+        });
+        futures.push(handle);
+    }
+
+    join_all(futures).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
     // producer a
     let a_handle = tokio::spawn(async {
         let client = Client::new();
@@ -130,7 +121,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
         for i in 0..20 {
             // println!("producing {i} for {producer_name}");
             let produce_resp = client
-                .post("http://localhost:1234/produce/test-topic")
+                .post("http://localhost:8011/produce/test-topic")
                 .json(&Message {
                     event_name: format!("{producer_name}{i}").to_string(),
                     event_data: "this is data".to_string(),
@@ -151,7 +142,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
         for i in 0..20 {
             // println!("producing {i} for {producer_name}");
             let produce_resp = client
-                .post("http://localhost:1234/produce/test-topic")
+                .post("http://localhost:8011/produce/test-topic")
                 .json(&Message {
                     event_name: format!("{producer_name}{i}").to_string(),
                     event_data: "this is data".to_string(),
@@ -174,7 +165,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
             println!("consuming {i} ");
             let client = Client::new();
             let consume_resp = client
-                .get("http://localhost:1234/consume/test-topic/abc/1")
+                .get("http://localhost:8011/consume/test-topic/abc/1")
                 .send()
                 .await
                 .unwrap();
@@ -202,7 +193,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
 
             // ack messgae
             let ack_resp = client
-                .post(format!("http://localhost:1234/ack/test-topic/abc/{msg_id}"))
+                .post(format!("http://localhost:8011/ack/test-topic/abc/{msg_id}"))
                 .send()
                 .await
                 .unwrap();
@@ -216,7 +207,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
     for _ in 0..50 {
         let client = Client::new();
         let consume_resp = client
-            .get("http://localhost:1234/consume/test-topic/123/1")
+            .get("http://localhost:8011/consume/test-topic/123/1")
             .send()
             .await
             .unwrap();
@@ -244,7 +235,7 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
 
         // ack messgae
         let ack_resp = client
-            .post(format!("http://localhost:1234/ack/test-topic/123/{msg_id}"))
+            .post(format!("http://localhost:8011/ack/test-topic/123/{msg_id}"))
             .send()
             .await
             .unwrap();
@@ -255,24 +246,6 @@ async fn test_multiproducer_multiconsumer_allmessagesconsumed() {
 
 #[tokio::test]
 async fn test_multiproducer_topic_cap_observed() {
-    tokio::task::spawn(async {
-        bob_ka::start_web_server(BobConfig {
-            temp_consumer_state: true,
-            web_config: WebServerConfig { port: 1234 },
-            topics: vec![TopicConfig {
-                name: "test-topic".to_string(),
-                compression: true,
-                cap: None,
-                cap_tolerance: None,
-                temporary: true,
-                backoff_dialation_ms: None,
-            }],
-        })
-        .await
-        .unwrap();
-    });
-
-    println!("here");
     // producer a
     let a_handle = tokio::spawn(async {
         let client = Client::new();
@@ -280,7 +253,7 @@ async fn test_multiproducer_topic_cap_observed() {
         for i in 0..50 {
             println!("producing {i} for {producer_name}");
             let produce_resp = client
-                .post("http://localhost:1234/produce/test-topic")
+                .post("http://localhost:8011/produce/test-topic-cap")
                 .json(&Message {
                     event_name: format!("{producer_name}{i}").to_string(),
                     event_data: "this is data".to_string(),
@@ -301,7 +274,7 @@ async fn test_multiproducer_topic_cap_observed() {
         for i in 0..50 {
             println!("producing {i} for {producer_name}");
             let produce_resp = client
-                .post("http://localhost:1234/produce/test-topic")
+                .post("http://localhost:8011/produce/test-topic-cap")
                 .json(&Message {
                     event_name: format!("{producer_name}{i}").to_string(),
                     event_data: "this is data".to_string(),
@@ -327,27 +300,10 @@ async fn test_consumer_batch_size() {
 
 #[tokio::test]
 async fn test_backpressure_no_content() {
-    tokio::task::spawn(async {
-        bob_ka::start_web_server(BobConfig {
-            temp_consumer_state: true,
-            web_config: WebServerConfig { port: 1234 },
-            topics: vec![TopicConfig {
-                name: "test-topic".to_string(),
-                compression: true,
-                cap: None,
-                cap_tolerance: None,
-                temporary: true,
-                backoff_dialation_ms: Some(1000),
-            }],
-        })
-        .await
-        .unwrap();
-    });
-
     let now = Instant::now();
     let client = Client::new();
     let consume_resp = client
-        .get("http://localhost:1234/consume/test-topic/abc/1")
+        .get("http://localhost:8011/consume/test-topic-backpressure/abc/1")
         .send()
         .await
         .unwrap();

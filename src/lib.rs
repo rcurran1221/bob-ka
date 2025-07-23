@@ -13,8 +13,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{event, info, span, Level};
 
-// use tracing package?
-// expose text/event-stream api?
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let subscriber = tracing_subscriber::fmt()
         .with_thread_ids(true)
@@ -59,8 +57,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
         let topic_tree = match db.open_tree("topic") {
             Ok(t) => t,
-            Err(e) => panic!(
-                "unable to open topic tree for topic:{}, error:{}",
+            Err(e) => panic!( "unable to open topic tree for topic:{}, error:{}",
                 topic.name.clone(),
                 e
             ),
@@ -285,7 +282,7 @@ async fn produce_handler(
     };
 
     let topic_cap = topic_db.topic_config.cap;
-    let topic_cap_tolerance = topic_db.topic_config.cap;
+    let topic_cap_tolerance = topic_db.topic_config.cap_tolerance;
 
     if let Some(cap) = topic_cap
         && cap > 0
@@ -293,10 +290,11 @@ async fn produce_handler(
         && topic_length > (cap + topic_cap_tolerance.unwrap_or_default())
     {
         event!(
-            Level::DEBUG,
+            Level::INFO,
             message = "topic out of tolerance, triming",
             topic_name,
             topic_length,
+            cap,
             topic_cap_tolerance
         );
 
@@ -318,7 +316,7 @@ async fn produce_handler(
         };
 
         event!(
-            Level::DEBUG,
+            Level::INFO,
             message = "decrementing topic length for trimmed items"
         );
         assert_eq!(topic_db.topic_tree.len() as u64, cap); // todo remove
@@ -346,7 +344,7 @@ async fn produce_handler(
         };
 
         event!(
-            Level::DEBUG,
+            Level::INFO,
             message = "succesfully decremented topic state",
             topic_length = to_u64(topic_length).unwrap_or_default()
         );
