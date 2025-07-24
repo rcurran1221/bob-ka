@@ -3,9 +3,10 @@ use std::error::Error;
 use std::fs;
 use toml::de::from_str;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // load the old config up
+    // todo - make config file a param to bin
     let config: BobConfig = match fs::read_to_string("config.toml") {
         Ok(content) => from_str(&content).expect("unable to parse config into struct"),
         Err(e) => panic!("cannot read config.toml!!: {e}"),

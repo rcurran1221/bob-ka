@@ -8,10 +8,10 @@ use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{event, info, span, Level};
+use tracing::{Level, event, info, span};
 
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let subscriber = tracing_subscriber::fmt()
@@ -19,6 +19,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         .compact()
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
+    // todo - set up a log listener
 
     let span = span!(Level::INFO, "start web server");
     let _enter = span.enter();
@@ -57,7 +58,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
         let topic_tree = match db.open_tree("topic") {
             Ok(t) => t,
-            Err(e) => panic!( "unable to open topic tree for topic:{}, error:{}",
+            Err(e) => panic!(
+                "unable to open topic tree for topic:{}, error:{}",
                 topic.name.clone(),
                 e
             ),
@@ -77,6 +79,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             topic_tree,
             top_db: db,
             topic_config: topic.clone(),
+            trim_mutex: Mutex::new(0),
         };
 
         topic_db_map.insert(topic.name.clone(), bob_topic);
@@ -84,7 +87,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         event!(
             Level::INFO,
             message = "successfully created topic",
-            topic_name,
+            topic_name = topic_name.clone(),
             topic_compression,
             topic_temporary
         )
@@ -258,35 +261,22 @@ async fn produce_handler(
         ),
     };
 
-    let topic_length = match topic_db
-        .stats_tree
-        .update_and_fetch("topic_length", increment)
-    {
-        Ok(l) => match l {
-            Some(l) => l,
-            None => {
-                println!("received none topic length after increment");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!("error: unable to get topic length")),
-                );
-            }
-        },
-        Err(e) => {
-            println!("error getting topic length: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!("error: unable to get topic length")),
-            );
-        }
-    };
-
+    let guard = topic_db.trim_mutex.lock().unwrap();
     let topic_cap = topic_db.topic_config.cap;
     let topic_cap_tolerance = topic_db.topic_config.cap_tolerance;
+    let topic_length = topic_db.topic_tree.len();
+
+    event!(
+        Level::INFO,
+        message = "evaluating trim of topic",
+        topic_name,
+        topic_length,
+        topic_cap,
+        topic_cap_tolerance
+    );
 
     if let Some(cap) = topic_cap
         && cap > 0
-        && let Some(topic_length) = to_u64(topic_length)
         && topic_length > (cap + topic_cap_tolerance.unwrap_or_default())
     {
         event!(
@@ -315,40 +305,22 @@ async fn produce_handler(
             println!("apply batch failed when triming")
         };
 
-        event!(
-            Level::INFO,
-            message = "decrementing topic length for trimmed items"
-        );
-        assert_eq!(topic_db.topic_tree.len() as u64, cap); // todo remove
-        let topic_length = match topic_db
-            .stats_tree
-            .update_and_fetch("topic_length", |old| decrement(n_msgs, old))
-        {
-            Ok(l) => match l {
-                Some(l) => l,
-                None => {
-                    println!("received none topic length after increment");
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!("error: unable to get topic length")),
-                    );
-                }
-            },
-            Err(e) => {
-                println!("error getting topic length: {e}");
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!("error: unable to get topic length")),
-                );
-            }
-        };
+        // todo - remove later, this is for validation, wouldnt want to re count length here
+        let new_topic_length = topic_db.topic_tree.len(); // its possible other threads have
+        // written to the topic, so wouldnt expect anything less than cap here
+        if new_topic_length < cap {
+            event!(Level::ERROR, message = "trimmed too much!", new_topic_length, cap)
+        }
 
         event!(
             Level::INFO,
-            message = "succesfully decremented topic state",
-            topic_length = to_u64(topic_length).unwrap_or_default()
+            message = "succesfully trimmed topic",
+            topic_name,
+            cap,
         );
     }
+
+    drop(guard);
 
     event!(
         Level::INFO,
@@ -357,34 +329,7 @@ async fn produce_handler(
         id
     );
 
-    // return result from before triming
     resp
-}
-
-fn increment(old: Option<&[u8]>) -> Option<Vec<u8>> {
-    let number = match old {
-        Some(bytes) => {
-            let array: [u8; 8] = bytes.try_into().unwrap();
-            let number = u64::from_be_bytes(array);
-            number + 1
-        }
-        None => 1,
-    };
-
-    Some(number.to_be_bytes().to_vec())
-}
-
-fn decrement(n: u64, old: Option<&[u8]>) -> Option<Vec<u8>> {
-    let number = match old {
-        Some(bytes) => {
-            let array: [u8; 8] = bytes.try_into().unwrap();
-            let number = u64::from_be_bytes(array);
-            number - n
-        }
-        None => 0,
-    };
-
-    Some(number.to_be_bytes().to_vec())
 }
 
 async fn consume_handler(
@@ -519,8 +464,8 @@ pub struct WebServerConfig {
 pub struct TopicConfig {
     pub name: String,
     pub compression: bool,
-    pub cap: Option<u64>,
-    pub cap_tolerance: Option<u64>,
+    pub cap: Option<usize>,
+    pub cap_tolerance: Option<usize>,
     pub temporary: bool,
     pub backoff_dialation_ms: Option<u64>,
 }
@@ -548,4 +493,5 @@ pub struct BobTopic {
     pub topic_tree: Tree,
     pub stats_tree: Tree,
     pub topic_config: TopicConfig,
+    pub trim_mutex: Mutex<i8>,
 }

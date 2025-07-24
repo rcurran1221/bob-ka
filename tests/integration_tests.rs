@@ -84,14 +84,13 @@ async fn test_quick_start() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-// #[tokio::test]
 async fn test_stress_test() {
-    let n_workers = 10;
+    let n_workers = 100;
     let mut futures = vec![];
     for n in 0..n_workers {
         let handle = tokio::spawn(async move {
             let client = Client::new();
-            for i in 0..10 {
+            for i in 0..100 {
                 let produce_resp = client
                     .post("http://localhost:8011/produce/test-topic")
                     .json(&Message {

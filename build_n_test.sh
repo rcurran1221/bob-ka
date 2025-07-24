@@ -17,6 +17,6 @@ cargo run --release &
 sleep 5s
 
 echo "Running tests..."
-cargo test
+cargo test $1
 
 echo "Done."
