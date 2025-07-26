@@ -109,6 +109,26 @@ async fn test_stress_test() {
     }
 
     join_all(futures).await;
+
+    let stats_resp = Client::new()
+        .get("http://localhost:8011/stats/test-topic")
+        .send()
+        .await
+        .unwrap();
+
+    match stats_resp.json::<StatsResponse>().await {
+        Ok(resp) => {
+            assert_eq!(resp.topic_name, "test-topic");
+            assert!(resp.topic_length >= 100);
+        }
+        Err(e) => panic!("error translating the json: {e}"),
+    };
+}
+
+#[derive(Deserialize)]
+struct StatsResponse {
+    topic_name: String,
+    topic_length: usize,
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

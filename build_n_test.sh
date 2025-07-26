@@ -7,8 +7,8 @@ set -e
 # Define the directories you want to delete
 
 echo "Deleting test dbs..."
-find . -type d -name '*consumer_state*' -exec rm -r {} +
-find . -type d -name '*test-topic*' -exec rm -r {} +
+rm -rf test-topic*/
+rm -rf consumer_state*/
 
 echo "running binary..."
 cargo run --release &

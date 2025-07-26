@@ -8,8 +8,9 @@ use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tracing::{Level, event, info, span};
 
@@ -21,9 +22,9 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     tracing::subscriber::set_global_default(subscriber)?;
     // todo - set up a log listener
 
-    let span = span!(Level::INFO, "start web server");
+    let span = span!(Level::INFO, "bob-ka");
     let _enter = span.enter();
-    event!(Level::INFO, "starting web server...");
+    tracing::event!(Level::INFO, "starting web server...");
 
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
@@ -65,10 +66,45 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             ),
         };
 
+        let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
+
+        tokio::task::spawn({
+            let topic_name = topic_name.clone();
+            let topic_cap = topic.cap;
+            let topic_cap_tolerance = topic.cap_tolerance;
+            async move {
+                loop {
+                    // something is bugged with async tracing
+                    event!(Level::INFO, message = "waiting for an event", topic_name);
+                    match tx.recv().await {
+                        Some(_) => {
+                            trim_trail(
+                                topic_name.clone(),
+                                topic_cap,
+                                topic_cap_tolerance,
+                                topic_tree.clone(),
+                            );
+                            event!(Level::INFO, message = "just trimmed tail");
+                        }
+                        None => return, //channel is closed, pack it up
+                    };
+                }
+            }
+        });
+
         let stats_tree = match db.open_tree("stats") {
             Ok(t) => t,
             Err(e) => panic!(
                 "unable to open stats tree for topic:{}, error:{}",
+                topic.name.clone(),
+                e
+            ),
+        };
+
+        let topic_tree = match db.open_tree("topic") {
+            Ok(t) => t,
+            Err(e) => panic!(
+                "unable to open topic tree for topic:{}, error:{}",
                 topic.name.clone(),
                 e
             ),
@@ -79,7 +115,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             topic_tree,
             top_db: db,
             topic_config: topic.clone(),
-            trim_mutex: Mutex::new(0),
+            event_sender: rx,
         };
 
         topic_db_map.insert(topic.name.clone(), bob_topic);
@@ -115,10 +151,6 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         consumer_state_db,
     });
 
-    drop(_enter); //exit config setup span
-
-    let web_server_span = span!(Level::INFO, "web request listener");
-    let _enter = web_server_span.enter();
     // Build the application with a route
     let app = Router::new()
         .route("/health", get(health))
@@ -131,6 +163,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             post(ack_handler),
         )
         .route("/produce/{topic_name}", post(produce_handler))
+        .route("/stats/{topic_name}", get(topic_stats_handler))
         .with_state(shared_state);
 
     // Run the server
@@ -149,12 +182,30 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
+// get
+async fn topic_stats_handler(
+    Path(topic_name): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    event!(Level::INFO, message = "got topic stats request", topic_name);
+
+    match state.topic_db_map.get(&topic_name) {
+        Some(topic) => (
+            StatusCode::OK,
+            Json(json!({"topic_name": topic_name, "topic_length" : topic.topic_tree.len()})),
+        ),
+
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!("error: could not find topic: {topic_name}")),
+        ),
+    }
+}
+
 async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let span = span!(Level::INFO, "ack handler");
-    let _enter = span.enter();
     event!(
         Level::INFO,
         message = "received ack request",
@@ -199,8 +250,6 @@ async fn produce_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let span = span!(Level::INFO, "produce handler");
-    let _enter = span.enter();
     event!(Level::INFO, message = "got produce request", topic_name);
 
     let topic_db = match state.topic_db_map.get(&topic_name) {
@@ -261,14 +310,41 @@ async fn produce_handler(
         ),
     };
 
-    let guard = topic_db.trim_mutex.lock().unwrap();
-    let topic_cap = topic_db.topic_config.cap;
-    let topic_cap_tolerance = topic_db.topic_config.cap_tolerance;
-    let topic_length = topic_db.topic_tree.len();
+    event!(
+        Level::INFO,
+        message = "successfully produced message",
+        topic_name,
+        id
+    );
+
+    if topic_db
+        .event_sender
+        .send((topic_name.clone(), 1))
+        .await
+        .is_err()
+    {
+        event!(
+            Level::ERROR,
+            message = "failed to send on event_sender",
+            topic_name
+        )
+    };
+
+    resp
+}
+
+fn trim_trail(
+    topic_name: String,
+    topic_cap: Option<usize>,
+    topic_cap_tolerance: Option<usize>,
+    topic_tree: Tree,
+) {
+    let topic_length = topic_tree.len();
+    print!("topic length: {topic_length}, topic name: {topic_name}");
 
     event!(
         Level::INFO,
-        message = "evaluating trim of topic",
+        message = "evaluating tail trim of topic",
         topic_name,
         topic_length,
         topic_cap,
@@ -289,27 +365,8 @@ async fn produce_handler(
         );
 
         let n_msgs = topic_length - cap;
-
-        let n_oldest_items = topic_db
-            .topic_tree
-            .iter()
-            .take((n_msgs) as usize)
-            .filter_map(|item| item.ok());
-
-        let mut batch = sled::Batch::default();
-        for item in n_oldest_items {
-            batch.remove(item.0);
-        }
-
-        if topic_db.topic_tree.apply_batch(batch).is_err() {
-            println!("apply batch failed when triming")
-        };
-
-        // todo - remove later, this is for validation, wouldnt want to re count length here
-        let new_topic_length = topic_db.topic_tree.len(); // its possible other threads have
-        // written to the topic, so wouldnt expect anything less than cap here
-        if new_topic_length < cap {
-            event!(Level::ERROR, message = "trimmed too much!", new_topic_length, cap)
+        for _ in 0..n_msgs {
+            topic_tree.pop_min().unwrap();
         }
 
         event!(
@@ -319,25 +376,12 @@ async fn produce_handler(
             cap,
         );
     }
-
-    drop(guard);
-
-    event!(
-        Level::INFO,
-        message = "successfully produced message",
-        topic_name,
-        id
-    );
-
-    resp
 }
 
 async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let span = span!(Level::INFO, "consume handler");
-    let _enter = span.enter();
     event!(
         Level::INFO,
         message = "got consume request",
@@ -493,5 +537,5 @@ pub struct BobTopic {
     pub topic_tree: Tree,
     pub stats_tree: Tree,
     pub topic_config: TopicConfig,
-    pub trim_mutex: Mutex<i8>,
+    pub event_sender: Sender<(String, u64)>,
 }
