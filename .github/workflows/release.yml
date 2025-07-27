@@ -1,4 +1,4 @@
-name: Build and Publish Rust Binary
+name: Build and Publish Rust Binary Bob-ka
 
 on:
   push:
