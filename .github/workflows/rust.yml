@@ -21,13 +21,13 @@ jobs:
     - name: Package binary
       run: |
           mkdir -p dist
-          cp target/release/<your_binary_name> dist/
-          tar -czvf dist/<your_binary_name>.tar.gz -C dist <your_binary_name>
+          cp target/release/bob_ka dist/
+          tar -czvf dist/bob_ka.tar.gz -C dist bob_ka
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-          files: dist/<your_binary_name>.tar.gz
+          files: dist/bob_ka.tar.gz
       env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
