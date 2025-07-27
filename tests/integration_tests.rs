@@ -86,7 +86,7 @@ async fn test_quick_start() {
     // agnostic http rest apis, allowing you to deliver messages reliably in any environment
 }
 
-// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_stress_test() {
     let n_workers = 100;
     let mut futures = vec![];
