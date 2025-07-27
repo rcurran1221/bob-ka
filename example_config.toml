@@ -1,0 +1,18 @@
+title = "boblog config"
+
+[web_config]
+port = 8011
+
+[[topics]]
+name = "topic1"
+compression = true # compress data at rest
+cap = 100 # approx max length of topic before trim, smaller topics = faster reads/writers but less data
+cap_tolerance = 10 # how many messages beyond cap you can tolerate
+backoff_dialation_ms = 1000 # amount of time to hold response to consumer when no new messages
+
+[[topics]]
+name = "topic2"
+compression = true
+cap = 100
+cap_tolerance = 10
+backoff_dialation_ms = 1000

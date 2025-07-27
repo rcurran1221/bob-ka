@@ -9,7 +9,7 @@ rm -rf test-topic*/
 rm -rf consumer_state*/
 
 echo "running binary..."
-cargo run &
+cargo run -- test_config.toml &
 
 sleep 5s
 
