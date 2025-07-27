@@ -24,3 +24,5 @@
 - Process exposes a "producer" API, modeled after Kafka producer
 - OAuth token-based authorization
 - Producer and consumer role-based security per topic
+
+<img width="641" height="491" alt="image" src="https://github.com/user-attachments/assets/612410ec-70d3-4120-bb24-669dc454efd7" />
