@@ -9,7 +9,7 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tracing::{Level, event, info, span};
@@ -68,23 +68,28 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
         let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
 
+        // one trim task per topic
         tokio::task::spawn({
             let topic_name = topic_name.clone();
             let topic_cap = topic.cap;
             let topic_cap_tolerance = topic.cap_tolerance;
             async move {
                 loop {
-                    // something is bugged with async tracing
-                    event!(Level::INFO, message = "waiting for an event", topic_name);
                     match tx.recv().await {
                         Some(_) => {
+                            let start = Instant::now();
                             trim_trail(
                                 topic_name.clone(),
                                 topic_cap,
                                 topic_cap_tolerance,
                                 topic_tree.clone(),
                             );
-                            event!(Level::INFO, message = "just trimmed tail");
+                            let duration = Instant::now().duration_since(start);
+                            event!(
+                                Level::INFO,
+                                message = "succesfully trimmed topic tail",
+                                duration = format!("{:?}", duration)
+                            )
                         }
                         None => return, //channel is closed, pack it up
                     };
@@ -182,7 +187,6 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
-// get
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -250,6 +254,7 @@ async fn produce_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    let start = Instant::now();
     event!(Level::INFO, message = "got produce request", topic_name);
 
     let topic_db = match state.topic_db_map.get(&topic_name) {
@@ -261,12 +266,6 @@ async fn produce_handler(
             );
         }
     };
-
-    event!(
-        Level::DEBUG,
-        message = "successfully retrieved topic db",
-        topic_name
-    );
 
     let payload_as_bytes = match to_vec(&payload) {
         Ok(p) => p,
@@ -281,7 +280,6 @@ async fn produce_handler(
         }
     };
 
-    event!(Level::DEBUG, message = "generating id", topic_name);
     let id = match topic_db.top_db.generate_id() {
         Ok(id) => id,
         Err(e) => {
@@ -293,12 +291,6 @@ async fn produce_handler(
         }
     };
 
-    event!(
-        Level::DEBUG,
-        message = "inserting payload into topic tree",
-        topic_name,
-        id
-    );
     let resp = match topic_db
         .topic_tree
         .insert(id.to_be_bytes(), payload_as_bytes)
@@ -310,13 +302,17 @@ async fn produce_handler(
         ),
     };
 
+    let duration = Instant::now().duration_since(start);
+
     event!(
         Level::INFO,
         message = "successfully produced message",
         topic_name,
-        id
+        id,
+        duration = format!("{:?}", duration)
     );
 
+    // notify for cleanup
     if topic_db
         .event_sender
         .send((topic_name.clone(), 1))
@@ -340,7 +336,6 @@ fn trim_trail(
     topic_tree: Tree,
 ) {
     let topic_length = topic_tree.len();
-    print!("topic length: {topic_length}, topic name: {topic_name}");
 
     event!(
         Level::INFO,
@@ -382,6 +377,7 @@ async fn consume_handler(
     Path((topic_name, consumer_id, batch_size)): Path<(String, String, u16)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    let start = Instant::now();
     event!(
         Level::INFO,
         message = "got consume request",
@@ -457,22 +453,23 @@ async fn consume_handler(
         .collect();
 
     let n_events = events.len();
+    let duration = Instant::now().duration_since(start);
     event!(
         Level::INFO,
         message = "successfully processed consume request",
         topic_name,
         consumer_id,
-        n_events
+        n_events,
+        duration = format!("{:?}", duration)
     );
 
-    // if n_events is zero, hold response for N seconds?
-    // or take a token, allow for N requests resulting in no events in X seconds
     if n_events == 0 {
         if let Some(d) = topic_db.topic_config.backoff_dialation_ms {
+            // sleep if no messages and backoff_dialation on
             sleep(Duration::from_millis(d)).await;
             event!(
                 Level::INFO,
-                message = "just woke up",
+                message = "time dialated",
                 sleep_ms = d,
                 topic_name,
                 consumer_id
@@ -524,11 +521,6 @@ struct Message {
 struct AppState {
     topic_db_map: HashMap<String, BobTopic>,
     consumer_state_db: Db,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct ErrorResponse {
-    message: String,
 }
 
 #[derive(Debug)]

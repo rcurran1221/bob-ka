@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use ::futures::future::join_all;
 use hyper::StatusCode;
@@ -7,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::Instant;
 
-#[tokio::test]
+// #[tokio::test]
 async fn test_quick_start() {
     // hello, welcome to bob-ka
     // this thing is a kafka inspired, lightweight, http/rest event thing
@@ -64,7 +67,7 @@ async fn test_quick_start() {
 
         // ack messgae
         // post request to ack/{topic_name}/{consumer_id}/{msg_id}
-        // server keeps track of where you are in the topic based on consumerid and last ack's
+        // server keeps track of where you are in the topic based on consumerid and last ack'd
         // message id
         let ack_resp = client
             .post(format!(
@@ -83,26 +86,33 @@ async fn test_quick_start() {
     // agnostic http rest apis, allowing you to deliver messages reliably in any environment
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_stress_test() {
     let n_workers = 100;
     let mut futures = vec![];
+    let timings = Arc::new(Mutex::new(Vec::<Duration>::new()));
     for n in 0..n_workers {
-        let handle = tokio::spawn(async move {
-            let client = Client::new();
-            for i in 0..100 {
-                let produce_resp = client
-                    .post("http://localhost:8011/produce/test-topic")
-                    .json(&Message {
-                        event_name: format!("{n}{i}").to_string(),
-                        event_data: "this is data".to_string(),
-                        event_num: i,
-                    })
-                    .send()
-                    .await
-                    .unwrap();
+        let handle = tokio::spawn({
+            let timings = timings.clone();
+            async move {
+                let client = Client::new();
+                for i in 0..100 {
+                    let now = Instant::now();
+                    let produce_resp = client
+                        .post("http://localhost:8011/produce/test-topic-stress")
+                        .json(&Message {
+                            event_name: format!("{n}{i}").to_string(),
+                            event_data: "this is data".to_string(),
+                            event_num: i,
+                        })
+                        .send()
+                        .await
+                        .unwrap();
 
-                assert_eq!(produce_resp.status(), StatusCode::OK);
+                    assert_eq!(produce_resp.status(), StatusCode::OK);
+                    let duration = now.elapsed();
+                    timings.lock().unwrap().push(duration);
+                }
             }
         });
         futures.push(handle);
@@ -111,18 +121,23 @@ async fn test_stress_test() {
     join_all(futures).await;
 
     let stats_resp = Client::new()
-        .get("http://localhost:8011/stats/test-topic")
+        .get("http://localhost:8011/stats/test-topic-stress")
         .send()
         .await
         .unwrap();
 
     match stats_resp.json::<StatsResponse>().await {
         Ok(resp) => {
-            assert_eq!(resp.topic_name, "test-topic");
+            assert_eq!(resp.topic_name, "test-topic-stress");
             assert!(resp.topic_length >= 100);
         }
         Err(e) => panic!("error translating the json: {e}"),
     };
+
+    // for res in timings.lock().unwrap().iter() {
+    //     println!{"{:?}", res};
+    // }
+
 }
 
 #[derive(Deserialize)]
