@@ -9,7 +9,7 @@ rm -rf test-topic*/
 rm -rf consumer_state*/
 
 echo "running binary..."
-cargo run --release &
+cargo run &
 
 sleep 5s
 
