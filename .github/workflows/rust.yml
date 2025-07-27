@@ -18,6 +18,18 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose
+    - name: Package binary
+      run: |
+          mkdir -p dist
+          cp target/release/<your_binary_name> dist/
+          tar -czvf dist/<your_binary_name>.tar.gz -C dist <your_binary_name>
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+          files: dist/<your_binary_name>.tar.gz
+      env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
 
