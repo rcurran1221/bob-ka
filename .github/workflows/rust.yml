@@ -3,7 +3,7 @@ name: Build and Publish Rust Binary
 on:
   push:
     tags:
-      - '*'  
+      - 'v*.*.*'  
 
 jobs:
   build:
