@@ -18,6 +18,18 @@ jobs:
     - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose
+    - name: Package binary
+      run: |
+          mkdir -p dist
+          cp target/release/bob_ka dist/
+          tar -czvf dist/bob_ka.tar.gz -C dist bob_ka
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+          files: dist/bob_ka.tar.gz
+      env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
 
