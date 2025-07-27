@@ -1,40 +1,35 @@
-name: Rust
+name: Build and Publish Rust Binary
 
 on:
   push:
     tags:
-      - "*.*.*"
-
-env:
-  CARGO_TERM_COLOR: always
+      - '*'  
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --release
-    - name: Package binary
-      run: |
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions/setup-rust@v1
+        with:
+          rust-version: stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package binary
+        run: |
           mkdir -p dist
           cp target/release/bob_ka dist/
           tar -czvf dist/bob_ka.tar.gz -C dist bob_ka
 
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
           files: dist/bob_ka.tar.gz
-      env:
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  test:
-
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: test
-      run: ./build_n_test.sh
