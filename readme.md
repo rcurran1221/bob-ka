@@ -7,12 +7,12 @@
 ## Apis
 - GET /health
 - GET /consume/{topic_name}/{consumer_id}/{batch_size}
-- - returns JSON {"messages": [{"id": 123, "data": {...}}]
+ - returns JSON {"messages": [{"id": 123, "data": {...}}]
 - POST /ack/{topic_name}/{consumer_id}/{last_msg_id}
 - POST /produce/{topic_name}
-- - JSON in body, persisted as is
+ - JSON in body, persisted as is
 - GET /stats/{topic_name}
-- - returns JSON {"topic_name": "test", "topic_length": 123}
+ - returns JSON {"topic_name": "test", "topic_length": 123}
  
 ## Feature
 - N topic, N consumer, N producer
