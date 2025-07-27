@@ -24,10 +24,12 @@ jobs:
           mkdir -p dist
           cp target/release/bob_ka dist/
           tar -czvf dist/bob_ka.tar.gz -C dist bob_ka
+          cp config.toml dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/bob_ka.tar.gz
+          files: dist/
+          
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
