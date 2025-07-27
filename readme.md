@@ -13,3 +13,9 @@
 - - JSON in body, persisted as is
 - GET /stats/{topic_name}
 - - returns JSON {"topic_name": "test", "topic_length": 123}
+ 
+## Feature
+- N topic, N consumer, N producer
+- consumer progress tracked per topic server side by way of ACK API
+- topic length caps, trim on "produce"
+- tight loop polling protection (backoff_dilation_ms)
