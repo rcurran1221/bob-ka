@@ -11,7 +11,7 @@ rm -rf consumer_state*/
 echo "running binary..."
 cargo run --release &
 
-sleep 15s
+sleep 5s
 
 echo "Running tests..."
 cargo test $1
