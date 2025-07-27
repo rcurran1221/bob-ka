@@ -19,7 +19,6 @@ jobs:
     - name: Build
       run: cargo build --verbose
 
-jobs:
   test:
 
     runs-on: ubuntu-latest
