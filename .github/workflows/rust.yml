@@ -3,8 +3,11 @@ name: Build and Publish Rust Binary
 on:
   push:
     tags:
-      - 'v*.*.*'  
-
+      - 'v*.*.*' 
+      
+permissions:
+  contents: write
+  
 jobs:
   build:
     runs-on: ubuntu-latest
