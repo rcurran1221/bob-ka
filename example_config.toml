@@ -16,3 +16,4 @@ compression = true
 cap = 100
 cap_tolerance = 10
 backoff_dialation_ms = 1000
+time_based_retention = 60 # retain 60 minutes of messages per topic

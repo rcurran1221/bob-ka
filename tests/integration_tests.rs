@@ -8,7 +8,7 @@ use hyper::StatusCode;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::time::Instant;
+use tokio::time::{Instant, sleep};
 
 // #[tokio::test]
 async fn test_quick_start() {
@@ -137,10 +137,9 @@ async fn test_stress_test() {
     // for res in timings.lock().unwrap().iter() {
     //     println!{"{:?}", res};
     // }
-
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct StatsResponse {
     topic_name: String,
     topic_length: usize,
@@ -346,6 +345,64 @@ async fn test_backpressure_no_content() {
     assert_eq!(consume_resp.status(), StatusCode::NO_CONTENT);
     print!("{}", dur.as_millis());
     assert!(dur > Duration::from_millis(1000));
+}
+
+#[tokio::test]
+async fn test_time_based_retention() {
+    let client = Client::new();
+    let producer_name = "a";
+    for i in 0..24 {
+        println!("producing {i} for {producer_name}");
+        let produce_resp = client
+            .post("http://localhost:8011/produce/test-topic-time-retention")
+            .json(&Message {
+                event_name: format!("{producer_name}{i}").to_string(),
+                event_data: "this is data".to_string(),
+                event_num: i,
+            })
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(produce_resp.status(), StatusCode::OK);
+
+        // sleep for 5 seconds
+        sleep(Duration::from_secs(5)).await;
+    }
+
+    let stats_resp = Client::new()
+        .get("http://localhost:8011/stats/test-topic-time-retention")
+        .send()
+        .await
+        .unwrap();
+
+    match stats_resp.json::<StatsResponse>().await {
+        Ok(resp) => {
+            println!("{:?}", resp);
+            assert_eq!(resp.topic_name, "test-topic-time-retention");
+            assert!(resp.topic_length >= 11 && resp.topic_length <= 13);
+        }
+        Err(e) => panic!("error translating the json: {e}"),
+    };
+
+    let consume_resp = client
+        .get("http://localhost:8011/consume/test-topic-time-retention/123/30")
+        .send()
+        .await
+        .unwrap()
+        .json::<Events<Message>>()
+        .await;
+
+    // should at least have event_nums from 23 to 10ish?, should not have 0 through 9
+    let mut event_nums: Vec<u16> = vec![];
+    for event in consume_resp.unwrap().events {
+        event_nums.push(event.data.event_num);
+    }
+
+    assert!(event_nums.contains(&23));
+    assert!(event_nums.contains(&13));
+    assert!(!event_nums.contains(&9));
+    assert!(!event_nums.contains(&0));
 }
 
 #[derive(Serialize, Deserialize)]

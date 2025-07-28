@@ -9,19 +9,33 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tracing::{Level, event, info, span};
+use tracing_appender::rolling;
+use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
-    let subscriber = tracing_subscriber::fmt()
-        .with_thread_ids(true)
-        .compact()
-        .finish();
-    tracing::subscriber::set_global_default(subscriber)?;
-    // todo - set up a log listener
+    let file_appender = rolling::daily("logs", "bob_ka.log");
 
+    let stdout_layer = fmt::layer().with_target(false).with_level(true);
+
+    let file_layer = fmt::layer()
+        .with_ansi(false)
+        .with_target(false)
+        .with_level(true)
+        .with_thread_ids(true)
+        .with_writer(file_appender);
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(file_layer)
+        .with(LevelFilter::from_level(Level::INFO))
+        .init();
+
+    // Combine layers and initialize the subscriber
     let span = span!(Level::INFO, "bob-ka");
     let _enter = span.enter();
     tracing::event!(Level::INFO, "starting web server...");
@@ -65,6 +79,14 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
                 e
             ),
         };
+        let timestamp_tree = match db.open_tree("timestamp") {
+            Ok(t) => t,
+            Err(e) => panic!(
+                "unable to open timestamp tree for topic: {}, error: {}",
+                topic.name.clone(),
+                e
+            ),
+        };
 
         let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
 
@@ -73,17 +95,31 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             let topic_name = topic_name.clone();
             let topic_cap = topic.cap;
             let topic_cap_tolerance = topic.cap_tolerance;
+            let topic_time_retention = topic.time_based_retention;
             async move {
                 loop {
                     match tx.recv().await {
                         Some(_) => {
                             let start = Instant::now();
-                            trim_trail(
-                                topic_name.clone(),
-                                topic_cap,
-                                topic_cap_tolerance,
-                                topic_tree.clone(),
-                            );
+                            match topic_time_retention {
+                                Some(t) => {
+                                    trim_tail_time(
+                                        topic_name.clone(),
+                                        t,
+                                        topic_tree.clone(),
+                                        timestamp_tree.clone(),
+                                    );
+                                }
+                                None => {
+                                    trim_trail(
+                                        topic_name.clone(),
+                                        topic_cap,
+                                        topic_cap_tolerance,
+                                        topic_tree.clone(),
+                                    );
+                                }
+                            }
+
                             let duration = Instant::now().duration_since(start);
                             event!(
                                 Level::INFO,
@@ -115,10 +151,19 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             ),
         };
 
+        let timestamp_tree = match db.open_tree("timestamp") {
+            Ok(t) => t,
+            Err(e) => panic!(
+                "unable to open timestamp tree for topic: {}, error: {}",
+                topic.name.clone(),
+                e
+            ),
+        };
         let bob_topic = BobTopic {
             stats_tree,
             topic_tree,
             top_db: db,
+            timestamp_tree,
             topic_config: topic.clone(),
             event_sender: rx,
         };
@@ -302,6 +347,13 @@ async fn produce_handler(
         ),
     };
 
+    let unix_timestamp = get_unix_timestamp();
+
+    topic_db
+        .timestamp_tree
+        .insert(IVec::from(&unix_timestamp.to_be_bytes()), &id.to_be_bytes())
+        .unwrap();
+
     let duration = Instant::now().duration_since(start);
 
     event!(
@@ -327,6 +379,11 @@ async fn produce_handler(
     };
 
     resp
+}
+
+fn get_unix_timestamp() -> u64 {
+    let now = SystemTime::now();
+    now.duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
 
 fn trim_trail(
@@ -371,6 +428,51 @@ fn trim_trail(
             cap,
         );
     }
+}
+
+fn trim_tail_time(
+    topic_name: String,
+    topic_retention_time: usize,
+    topic_tree: Tree,
+    timestamp_tree: Tree,
+) {
+    event!(
+        Level::INFO,
+        message = "triming tail of topic by time",
+        topic_name,
+        topic_retention_time,
+    );
+
+    let delete_before_timestamp = SystemTime::now()
+        .checked_sub(Duration::from_secs((topic_retention_time * 60) as u64))
+        .unwrap()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let delete_before_id = timestamp_tree
+        .get(delete_before_timestamp.to_be_bytes())
+        .unwrap_or_default()
+        .unwrap_or_default();
+
+    // delete all items up to id
+    let mut count_delete = 0;
+    for item in topic_tree.range(..delete_before_id) {
+        topic_tree.remove(item.unwrap_or_default().0).unwrap_or_default();
+        count_delete += 1;
+    }
+
+    for item in timestamp_tree.range(..delete_before_timestamp.to_be_bytes()) {
+        timestamp_tree.remove(item.unwrap().0).unwrap();
+    }
+
+    event!(
+        Level::INFO,
+        message = "successfully trimmed tail by time",
+        topic_name,
+        topic_retention_time,
+        count_delete
+    );
 }
 
 async fn consume_handler(
@@ -505,6 +607,7 @@ pub struct WebServerConfig {
 pub struct TopicConfig {
     pub name: String,
     pub compression: bool,
+    pub time_based_retention: Option<usize>, // time in minutes to retain
     pub cap: Option<usize>,
     pub cap_tolerance: Option<usize>,
     pub temporary: bool,
@@ -528,6 +631,7 @@ pub struct BobTopic {
     pub top_db: Db,
     pub topic_tree: Tree,
     pub stats_tree: Tree,
+    pub timestamp_tree: Tree,
     pub topic_config: TopicConfig,
     pub event_sender: Sender<(String, u64)>,
 }

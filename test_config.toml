@@ -30,3 +30,8 @@ cap = 10
 cap_tolerance = 3
 temporary = false
 backoff_dialation_ms = 1000
+[[topics]]
+name = "test-topic-time-retention"
+compression = true
+time_based_retention = 1 # minute
+temporary = false
