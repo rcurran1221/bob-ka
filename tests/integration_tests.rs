@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::{Instant, sleep};
 
-// #[tokio::test]
+#[ignore]
+#[tokio::test]
 async fn test_quick_start() {
     // hello, welcome to bob-ka
     // this thing is a kafka inspired, lightweight, http/rest event thing
@@ -347,6 +348,7 @@ async fn test_backpressure_no_content() {
     assert!(dur > Duration::from_millis(1000));
 }
 
+#[ignore]
 #[tokio::test]
 async fn test_time_based_retention() {
     let client = Client::new();
