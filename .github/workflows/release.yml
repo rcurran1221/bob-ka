@@ -24,7 +24,7 @@ jobs:
           mkdir -p dist
           cp target/release/bob_ka dist/
           cp example_config.toml dist/
-          tar -czvf dist/bob_ka.tar.gz -C dist bob_ka
+          tar -czvf dist/bob_ka.tar.gz -C dist bob_ka example_config.toml
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
