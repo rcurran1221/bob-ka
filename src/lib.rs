@@ -1,5 +1,4 @@
 use axum::Json;
-use axum::extract::rejection::UnknownBodyError;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
@@ -11,7 +10,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::broadcast::error;
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tracing::{Level, event, info, span};
@@ -474,7 +472,7 @@ fn trim_tail_time(
             );
             Some(IVec::default())
         })
-        .unwrap(); // ok to unwrap because i know it will return a Some()
+        .unwrap_or_default();
 
     let mut count_delete = 0;
     for item in topic_tree.range(..delete_before_id) {
