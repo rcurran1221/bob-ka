@@ -20,7 +20,6 @@
 ## Quick Start
 - see test_quick_start() in integration_tests.rs for an example:
 ```rust
-```rust
 #[tokio::test]
 async fn test_quick_start() {
     // hello, welcome to bob-ka
@@ -102,5 +101,4 @@ async fn test_quick_start() {
     // this solution is lightweight, kafka consumer/producer pattern inspried, with language
     // agnostic http rest apis, allowing you to deliver messages reliably in any environment
 }
-```
 ```
