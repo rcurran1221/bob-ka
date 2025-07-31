@@ -378,11 +378,12 @@ async fn test_time_based_retention() {
         .await
         .unwrap();
 
-    match stats_resp.json::<StatsResponse>().await {
+    let len_topic = match stats_resp.json::<StatsResponse>().await {
         Ok(resp) => {
             println!("{:?}", resp);
             assert_eq!(resp.topic_name, "test-topic-time-retention");
             assert!(resp.topic_length >= 11 && resp.topic_length <= 13);
+            resp.topic_length
         }
         Err(e) => panic!("error translating the json: {e}"),
     };
@@ -401,6 +402,7 @@ async fn test_time_based_retention() {
         event_nums.push(event.data.event_num);
     }
 
+    assert_eq!(len_topic, event_nums.len());
     assert!(event_nums.contains(&23));
     assert!(event_nums.contains(&13));
     assert!(!event_nums.contains(&9));

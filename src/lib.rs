@@ -1,4 +1,5 @@
 use axum::Json;
+use axum::extract::rejection::UnknownBodyError;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
@@ -10,6 +11,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast::error;
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
 use tracing::{Level, event, info, span};
@@ -88,23 +90,23 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             ),
         };
 
+        // set up post produce events
         let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
 
         // one trim task per topic
         tokio::task::spawn({
-            let topic_name = topic_name.clone();
             let topic_cap = topic.cap;
             let topic_cap_tolerance = topic.cap_tolerance;
             let topic_time_retention = topic.time_based_retention;
             async move {
                 loop {
                     match tx.recv().await {
-                        Some(_) => {
+                        Some((topic_name, _)) => {
                             let start = Instant::now();
                             match topic_time_retention {
                                 Some(t) => {
                                     trim_tail_time(
-                                        topic_name.clone(),
+                                        topic_name,
                                         t,
                                         topic_tree.clone(),
                                         timestamp_tree.clone(),
@@ -112,7 +114,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
                                 }
                                 None => {
                                     trim_trail(
-                                        topic_name.clone(),
+                                        topic_name,
                                         topic_cap,
                                         topic_cap_tolerance,
                                         topic_tree.clone(),
@@ -224,6 +226,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         message = "web server is listening",
         address = addr
     );
+
+    // ok to unwrap here
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 
@@ -255,6 +259,7 @@ async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    let start = Instant::now();
     event!(
         Level::INFO,
         message = "received ack request",
@@ -271,7 +276,7 @@ async fn ack_handler(
         .insert(state_key, IVec::from(&new_consumer_state.to_be_bytes()))
     {
         Ok(s) => match s {
-            Some(s) => u64::from_be_bytes(s.to_vec().try_into().unwrap()),
+            Some(s) => to_u64(s).unwrap_or_default(),
             None => 0,
         },
         Err(e) => {
@@ -282,13 +287,16 @@ async fn ack_handler(
         }
     };
 
+    let duration = Instant::now().duration_since(start);
+
     event!(
         Level::INFO,
         message = "consumer state updated",
         previous_consumer_state,
         new_consumer_state,
         topic_name,
-        consumer_id
+        consumer_id,
+        duration = format!("{:?}", duration),
     );
 
     StatusCode::OK
@@ -349,10 +357,13 @@ async fn produce_handler(
 
     let unix_timestamp = get_unix_timestamp();
 
-    topic_db
+    if topic_db
         .timestamp_tree
         .insert(IVec::from(&unix_timestamp.to_be_bytes()), &id.to_be_bytes())
-        .unwrap();
+        .is_err()
+    {
+        event!(Level::ERROR, message = "failed to insert into timestamp db",);
+    }
 
     let duration = Instant::now().duration_since(start);
 
@@ -418,7 +429,9 @@ fn trim_trail(
 
         let n_msgs = topic_length - cap;
         for _ in 0..n_msgs {
-            topic_tree.pop_min().unwrap();
+            if topic_tree.pop_min().is_err() {
+                event!(Level::ERROR, message = "error poping min", topic_name)
+            }
         }
 
         event!(
@@ -445,25 +458,42 @@ fn trim_tail_time(
 
     let delete_before_timestamp = SystemTime::now()
         .checked_sub(Duration::from_secs((topic_retention_time * 60) as u64))
-        .unwrap()
+        .unwrap_or(UNIX_EPOCH)
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+        .unwrap_or_default()
+        .as_secs()
+        .to_be_bytes();
 
     let delete_before_id = timestamp_tree
-        .get(delete_before_timestamp.to_be_bytes())
-        .unwrap_or_default()
-        .unwrap_or_default();
+        .get(delete_before_timestamp)
+        .unwrap_or_else(|_| {
+            event!(
+                Level::ERROR,
+                message = "failed to get delete id from timestamp",
+                topic_name,
+            );
+            Some(IVec::default())
+        })
+        .unwrap(); // ok to unwrap because i know it will return a Some()
 
-    // delete all items up to id
     let mut count_delete = 0;
     for item in topic_tree.range(..delete_before_id) {
-        topic_tree.remove(item.unwrap_or_default().0).unwrap_or_default();
+        topic_tree
+            .remove(item.unwrap_or_default().0)
+            .unwrap_or_default();
         count_delete += 1;
     }
-
-    for item in timestamp_tree.range(..delete_before_timestamp.to_be_bytes()) {
-        timestamp_tree.remove(item.unwrap().0).unwrap();
+    for item in timestamp_tree.range(..delete_before_timestamp) {
+        timestamp_tree
+            .remove(item.unwrap_or_default().0)
+            .unwrap_or_else(|_| {
+                event!(
+                    Level::ERROR,
+                    message = "failed to remove from timestamp tree",
+                    topic_name
+                );
+                Some(IVec::default())
+            });
     }
 
     event!(
@@ -491,7 +521,7 @@ async fn consume_handler(
     let topic_db = match state.topic_db_map.get(&topic_name) {
         Some(db) => db,
         None => {
-            println!("topic not found: {topic_name}");
+            event!(Level::ERROR, message = "topic not found", topic_name);
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
@@ -504,13 +534,19 @@ async fn consume_handler(
         Ok(msg_id_opt) => match msg_id_opt {
             Some(msg_i) => msg_i,
             None => {
-                println!(
-                    "consumer-state db did not contain an entry for {state_key}, setting to 0"
+                event!(
+                    Level::INFO,
+                    message =
+                        "consumer-state db did not contain an entry for {state_key}, setting to 0"
                 );
                 IVec::from(&[0])
             }
         },
         Err(error) => {
+            event!(
+                Level::ERROR,
+                message = "error reading from consumer state db"
+            );
             println!("error reading from consumer state db: {error}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -525,30 +561,41 @@ async fn consume_handler(
         .take(batch_size as usize)
         .filter_map(|e| match e {
             Ok(e) => {
-                // if key from utf8 or value from utf8 err => return None
                 let key = match to_u64(e.0) {
                     Some(v) => v,
                     None => {
-                        println!("failed to convert vec into [u8; 8]");
+                        event!(
+                            Level::ERROR,
+                            message = "failed to convert vec into [u8; 8]",
+                            topic_name
+                        );
                         return None;
                     }
                 };
 
                 let value = match String::from_utf8(e.1.to_vec()) {
                     Ok(value) => value,
-                    Err(e) => {
-                        println!("string from utf8 failed for key: {e}");
+                    Err(_) => {
+                        event!(
+                            Level::ERROR,
+                            message = "ivec to string from utf8 failed",
+                            topic_name
+                        );
                         return None;
                     }
                 };
 
                 Some(Message {
                     id: key,
-                    data: serde_json::from_str(&value).unwrap(),
+                    data: serde_json::from_str(&value).unwrap_or_default(),
                 })
             }
-            Err(err) => {
-                print!("error reading messages from topic: {topic_name}, error: {err}");
+            Err(_) => {
+                event!(
+                    Level::ERROR,
+                    message = "error reading messages from topic",
+                    topic_name
+                );
                 None
             }
         })
