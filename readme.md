@@ -106,3 +106,8 @@ async fn test_quick_start() {
 ## Next Steps
 - nodes of multiple bob-ka's managed by a "mothership" service
 - - allows topics to be load balanced around multiple services/machines
+- - service discovery
+- - - nodes are given mothership address at config time
+- - - if nodes have mothership, send message letting current location be known
+- - - mothership keeps state of nodes, which topics they own, and where they are running
+ 
