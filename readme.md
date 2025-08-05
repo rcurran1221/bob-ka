@@ -102,3 +102,7 @@ async fn test_quick_start() {
     // agnostic http rest apis, allowing you to deliver messages reliably in any environment
 }
 ```
+
+## Next Steps
+- nodes of multiple bob-ka's managed by a "mothership" service
+- - allows topics to be load balanced around multiple services/machines
