@@ -9,6 +9,7 @@ use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
+use std::sync::mpsc::channel;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
@@ -88,50 +89,89 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             ),
         };
 
-        // set up post produce events
-        let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
-
-        // one trim task per topic
-        tokio::task::spawn({
+        let (mut tx, rx) = channel::<(String, u64)>();
+        std::thread::spawn({
             let topic_cap = topic.cap;
             let topic_cap_tolerance = topic.cap_tolerance;
             let topic_time_retention = topic.time_based_retention;
-            async move {
-                loop {
-                    match tx.recv().await {
-                        Some((topic_name, _)) => {
-                            let start = Instant::now();
-                            match topic_time_retention {
-                                Some(t) => {
-                                    trim_tail_time(
-                                        topic_name,
-                                        t,
-                                        topic_tree.clone(),
-                                        timestamp_tree.clone(),
-                                    );
-                                }
-                                None => {
-                                    trim_trail(
-                                        topic_name,
-                                        topic_cap,
-                                        topic_cap_tolerance,
-                                        topic_tree.clone(),
-                                    );
-                                }
-                            }
-
-                            let duration = Instant::now().duration_since(start);
-                            event!(
-                                Level::INFO,
-                                message = "succesfully trimmed topic tail",
-                                duration = format!("{:?}", duration)
-                            )
+            move || match rx.recv() {
+                Ok((topic_name, _)) => {
+                    let start = Instant::now();
+                    match topic_time_retention {
+                        Some(t) => {
+                            trim_tail_time(
+                                topic_name,
+                                t,
+                                topic_tree.clone(),
+                                timestamp_tree.clone(),
+                            );
                         }
-                        None => return, //channel is closed, pack it up
-                    };
+                        None => {
+                            trim_trail(
+                                topic_name,
+                                topic_cap,
+                                topic_cap_tolerance,
+                                topic_tree.clone(),
+                            );
+                        }
+                    }
+
+                    let duration = Instant::now().duration_since(start);
+                    event!(
+                        Level::INFO,
+                        message = "succesfully trimmed topic tail",
+                        duration = format!("{:?}", duration)
+                    )
+                }
+                Err(e) => {
+                    return;
                 }
             }
         });
+        // set up post produce events
+        // let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
+
+        // // one trim task per topic
+        // tokio::task::spawn({
+        //     let topic_cap = topic.cap;
+        //     let topic_cap_tolerance = topic.cap_tolerance;
+        //     let topic_time_retention = topic.time_based_retention;
+        //     async move {
+        //         loop {
+        //             match tx.recv().await {
+        //                 Some((topic_name, _)) => {
+        //                     let start = Instant::now();
+        //                     match topic_time_retention {
+        //                         Some(t) => {
+        //                             trim_tail_time(
+        //                                 topic_name,
+        //                                 t,
+        //                                 topic_tree.clone(),
+        //                                 timestamp_tree.clone(),
+        //                             );
+        //                         }
+        //                         None => {
+        //                             trim_trail(
+        //                                 topic_name,
+        //                                 topic_cap,
+        //                                 topic_cap_tolerance,
+        //                                 topic_tree.clone(),
+        //                             );
+        //                         }
+        //                     }
+
+        //                     let duration = Instant::now().duration_since(start);
+        //                     event!(
+        //                         Level::INFO,
+        //                         message = "succesfully trimmed topic tail",
+        //                         duration = format!("{:?}", duration)
+        //                     )
+        //                 }
+        //                 None => return, //channel is closed, pack it up
+        //             };
+        //         }
+        //     }
+        // });
 
         let stats_tree = match db.open_tree("stats") {
             Ok(t) => t,
