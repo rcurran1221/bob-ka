@@ -40,6 +40,14 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let _enter = span.enter();
     tracing::event!(Level::INFO, "starting web server...");
 
+    let node_id = uuid::Uuid::new_v4().hyphenated().to_string();
+
+    event!(Level::INFO, message = "node id generated", node_id);
+
+    if config.mothership.is_mothership {
+        // setup mothership? new library? or w/e
+    }
+
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
     for topic in config.topics.iter() {
@@ -51,6 +59,24 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
         if topic.name == "consumer_state" {
             panic!("cannot have a topic named consumer_state");
+        }
+
+        // in this config its possible to broadcast only a subset of topics to mothership?
+        // not sure why you would want to, but its easier to implement as such
+        if let Some(addr) = topic.mothership_address.clone() {
+            event!(
+                Level::INFO,
+                message = "this node will phone home to mothership",
+                topic_name = topic.name,
+                address = addr,
+                node_id,
+            )
+
+            // http client outgoing to addr + path
+            // need to figure out which http client to use
+            // send topic name, current location, node id (correlation guid, non durable? just generate in memory on startup?)
+            // how is current location determined? leave it up to mothership to see where req came from with Origin header?
+            // how does a node know where its is running other than its port anyways?
         }
 
         let topic_name = topic.name.clone();
@@ -640,6 +666,7 @@ fn to_u64(input: IVec) -> Option<u64> {
 pub struct BobConfig {
     pub web_config: WebServerConfig,
     pub topics: Vec<TopicConfig>,
+    pub mothership: MothershipConfig,
     pub temp_consumer_state: bool,
 }
 
@@ -657,6 +684,12 @@ pub struct TopicConfig {
     pub cap_tolerance: Option<usize>,
     pub temporary: bool,
     pub backoff_dialation_ms: Option<u64>,
+    pub mothership_address: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct MothershipConfig {
+    pub is_mothership: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

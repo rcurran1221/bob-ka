@@ -16,3 +16,14 @@ compression = true
 backoff_dialation_ms = 1000
 time_based_retention = 60 # retain 60 minutes of messages per topic, instead of count based
 
+# or
+title = "boblog mothership"
+
+[web_config]
+port = 8012
+
+[mothership]
+is_mothership = true # this enables node as a "mothership"
+
+# no topics when mothership
+
