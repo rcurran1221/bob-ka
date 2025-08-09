@@ -44,10 +44,6 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     event!(Level::INFO, message = "node id generated", node_id);
 
-    if config.mothership.is_mothership {
-        // setup mothership? new library? or w/e
-    }
-
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
     for topic in config.topics.iter() {
@@ -61,8 +57,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             panic!("cannot have a topic named consumer_state");
         }
 
-        // in this config its possible to broadcast only a subset of topics to mothership?
-        // not sure why you would want to, but its easier to implement as such
+        // todo - build the mother ship api to handle this register call?
+        // for some reason, i find x + d combination to remove line to be very uncomfortable
         if let Some(addr) = topic.mothership_address.clone() {
             tokio::task::spawn({
                 let topic_name = topic.name.clone();
@@ -276,7 +272,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     });
 
     // Build the application with a route
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/health", get(health))
         .route(
             "/consume/{topic_name}/{consumer_id}/{batch_size}",
@@ -289,6 +285,10 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
         .with_state(shared_state);
+
+    if config.mothership.is_mothership {
+        app = app.route("/register", get(health));
+    }
 
     // Run the server
     let addr = format!("0.0.0.0:{}", config.web_config.port);
@@ -307,6 +307,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 }
 
 async fn health() {}
+
+async fn register_node_handler(Path((node_id)): Path<String>, State(state): State<Arc<AppState>>) {}
 
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
