@@ -285,7 +285,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     });
 
     // Build the application with a route
-    let mut app = Router::new()
+    let app = Router::new()
         .route("/health", get(health))
         .route(
             "/consume/{topic_name}/{consumer_id}/{batch_size}",
@@ -300,7 +300,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         .with_state(shared_state);
 
     if config.mothership.is_mothership {
-        app = app.route("/register", get(health));
+        let feature_router = Router::new().route("/register", post(register_node_handler));
+        app = app.merge(feature_router);
     }
 
     // Run the server
@@ -322,7 +323,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 async fn health() {}
 
 async fn register_node_handler(
-    Path((node_id)): Path<String>,
+    Path((node_id, topic_name)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     // kv store, key = topic_name, value = address, nodeid?
@@ -331,6 +332,24 @@ async fn register_node_handler(
     // when to remove nodes from the registered nodes?
     // have nodes heartbeat the mothership regularly?
     // how to "expire" nodes?, worry about it later...
+    match state.mothership_db.clone() {
+        Some(db) => {
+            // db.update_and_fetch(key, f)
+            // get address? map topicname key to (address, node_id)
+            let node_address = "http://localhost:1234".to_string();
+            db.insert(topic_name.into_bytes(), node_address.into_bytes());
+        }
+        None => {
+            event!(
+                Level::INFO,
+                message =
+                    "mothership db does not exist, should not have received a request to this url"
+            );
+            return StatusCode::BAD_REQUEST;
+        }
+    }
+
+    StatusCode::OK
 }
 
 async fn topic_stats_handler(
