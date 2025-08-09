@@ -64,19 +64,67 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         // in this config its possible to broadcast only a subset of topics to mothership?
         // not sure why you would want to, but its easier to implement as such
         if let Some(addr) = topic.mothership_address.clone() {
-            event!(
-                Level::INFO,
-                message = "this node will phone home to mothership",
-                topic_name = topic.name,
-                address = addr,
-                node_id,
-            )
+            tokio::task::spawn({
+                let topic_name = topic.name.clone();
+                let node_id = node_id.clone();
+                async move {
+                    event!(
+                        Level::INFO,
+                        message = "this node will phone home to mothership",
+                        topic_name = topic_name,
+                        address = addr,
+                        node_id,
+                    );
+                    let client = reqwest::Client::new();
 
-            // http client outgoing to addr + path
-            // need to figure out which http client to use
-            // send topic name, current location, node id (correlation guid, non durable? just generate in memory on startup?)
-            // how is current location determined? leave it up to mothership to see where req came from with Origin header?
-            // how does a node know where its is running other than its port anyways?
+                    loop {
+                        let should_retry = match client
+                            .post(format!("{addr}/register"))
+                            .json(&json!({ "node_id": node_id , "topic_name": topic_name}))
+                            .send()
+                            .await
+                        {
+                            Ok(resp) => {
+                                if resp.status() != StatusCode::OK {
+                                    event!(
+                                        Level::ERROR,
+                                        message = "call home failed",
+                                        status_code = resp.status().to_string(),
+                                    );
+                                    true
+                                } else {
+                                    event!(
+                                        Level::INFO,
+                                        message = "successfully called home",
+                                        address = addr,
+                                        node_id = node_id
+                                    );
+                                    false
+                                }
+                            }
+                            Err(e) => {
+                                event!(
+                                    Level::ERROR,
+                                    message = "failed to send request home",
+                                    error = e.to_string()
+                                );
+                                true
+                            }
+                        };
+
+                        if !should_retry {
+                            break;
+                        }
+                        event!(
+                            Level::WARN,
+                            message = "retrying call to mothership...",
+                            node_id,
+                        );
+
+                        sleep(Duration::from_millis(1000)).await;
+                    }
+                }
+            });
         }
 
         let topic_name = topic.name.clone();
