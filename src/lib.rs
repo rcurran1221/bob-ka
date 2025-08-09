@@ -266,9 +266,22 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         config.temp_consumer_state
     );
 
+    let mothership_db = match config.mothership.is_mothership {
+        true => {
+            let mothership_db = match Config::new().path("mothership_db").open() {
+                Ok(db) => db,
+                Err(e) => panic!("unable to open mothership db: {e}"),
+            };
+
+            Some(mothership_db)
+        }
+        false => None,
+    };
+
     let shared_state = Arc::new(AppState {
         topic_db_map,
         consumer_state_db,
+        mothership_db,
     });
 
     // Build the application with a route
@@ -308,7 +321,17 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
-async fn register_node_handler(Path((node_id)): Path<String>, State(state): State<Arc<AppState>>) {}
+async fn register_node_handler(
+    Path((node_id)): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // kv store, key = topic_name, value = address, nodeid?
+    // what if two nodes report the same topic?
+    // reject second node?
+    // when to remove nodes from the registered nodes?
+    // have nodes heartbeat the mothership regularly?
+    // how to "expire" nodes?, worry about it later...
+}
 
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
@@ -752,6 +775,7 @@ struct Message {
 struct AppState {
     topic_db_map: HashMap<String, BobTopic>,
     consumer_state_db: Db,
+    mothership_db: Option<Db>,
 }
 
 #[derive(Debug)]
