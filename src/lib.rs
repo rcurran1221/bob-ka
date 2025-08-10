@@ -1,18 +1,21 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
+use axum::serve::IncomingStream;
 use axum::{Router, http::StatusCode, routing::get};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
+use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
-use tracing::{Level, event, info, span};
+use tracing::{Instrument, Level, event, info, span};
 use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -297,12 +300,9 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
-        .with_state(shared_state);
-
-    if config.mothership.is_mothership {
-        let feature_router = Router::new().route("/register", post(register_node_handler));
-        app = app.merge(feature_router);
-    }
+        .route("/register", post(register_node_handler)) // todo - how to conditionally add route
+        .with_state(shared_state)
+        .into_make_service_with_connect_info::<ConnectInfo<SocketAddr>>();
 
     // Run the server
     let addr = format!("0.0.0.0:{}", config.web_config.port);
@@ -324,20 +324,25 @@ async fn health() {}
 
 async fn register_node_handler(
     Path((node_id, topic_name)): Path<(String, String)>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // kv store, key = topic_name, value = address, nodeid?
-    // what if two nodes report the same topic?
-    // reject second node?
-    // when to remove nodes from the registered nodes?
-    // have nodes heartbeat the mothership regularly?
-    // how to "expire" nodes?, worry about it later...
+    let node_address = addr.to_string();
+
     match state.mothership_db.clone() {
         Some(db) => {
-            // db.update_and_fetch(key, f)
-            // get address? map topicname key to (address, node_id)
-            let node_address = "http://localhost:1234".to_string();
-            db.insert(topic_name.into_bytes(), node_address.into_bytes());
+            let data = format!("{node_address}|{node_id}");
+            match db.insert(topic_name.clone().into_bytes(), data.into_bytes()) {
+                Ok(_) => {}
+                Err(_) => {
+                    event!(
+                        Level::ERROR,
+                        message = "failed to insert into mothership db",
+                        topic_name = topic_name.clone(),
+                    );
+                    return StatusCode::INTERNAL_SERVER_ERROR;
+                }
+            };
         }
         None => {
             event!(
@@ -349,6 +354,14 @@ async fn register_node_handler(
         }
     }
 
+    event!(
+        Level::INFO,
+        message = "successfully registered node with mothership",
+        node_id,
+        node_address,
+        topic_name,
+    );
+
     StatusCode::OK
 }
 
@@ -357,6 +370,66 @@ async fn topic_stats_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     event!(Level::INFO, message = "got topic stats request", topic_name);
+
+    if let Some(db) = state.mothership_db.clone() {
+        match db.get(topic_name.into_bytes()) {
+            Ok(o) => {
+                match o {
+                    Some(node_data) => {
+                        // get address from node data
+                        // send http request
+                        let client = reqwest::Client::new(); // do i need to reuse client per node/topic
+                        let node_data = match to_string(node_data) {
+                            Some(d) => d,
+                            None => {
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(json!({"error": "something went wrong"})),
+                                );
+                            }
+                        };
+
+                        let data_split = node_data.split("|");
+                        let node_address = match data_split.next() {
+                            Some(addr) => addr,
+                            None => {
+                                event!(
+                                    Level::ERROR,
+                                    message = "bad data in mothership entry",
+                                    topic_name
+                                );
+                                return (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    Json(json!({"error": "bad data for mothership entry"})),
+                                );
+                            }
+                        };
+                        let node_id = data_split.next();
+
+                        let url = format!("http://{node_address}/stats/{topic_name}");
+                        let resp = match client.get(url).send().await {
+                            Ok(resp) => {
+                                // respond with same status code and json
+                            }
+                            Err(e) => {
+                                event!(
+                                    Level::ERROR,
+                                    message = "call to node failed",
+                                    node_address,
+                                    node_id
+                                );
+                                return (
+                                    StatusCode::BAD_GATEWAY,
+                                    Json(json!({"error": "failed to contact child node"})),
+                                );
+                            }
+                        };
+                    }
+                }
+            }
+        };
+        return (StatusCode::OK, Json(json!({"ok": "yes"})));
+    };
 
     match state.topic_db_map.get(&topic_name) {
         Some(topic) => (
@@ -750,6 +823,13 @@ async fn consume_handler(
 fn to_u64(input: IVec) -> Option<u64> {
     match input.to_vec().try_into() {
         Ok(i) => Some(u64::from_be_bytes(i)),
+        Err(_) => None,
+    }
+}
+
+fn to_string(input: IVec) -> Option<String> {
+    match String::from_utf8(input.to_vec()) {
+        Ok(s) => Some(s),
         Err(_) => None,
     }
 }
