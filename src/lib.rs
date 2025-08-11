@@ -6,7 +6,7 @@ use axum::serve::IncomingStream;
 use axum::{Router, http::StatusCode, routing::get};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, to_vec};
+use serde_json::{Value, json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
@@ -365,6 +365,59 @@ async fn register_node_handler(
     StatusCode::OK
 }
 
+fn get_topic_node_info(
+    topic_name: String,
+    mothership_db: Db,
+) -> Result<(String, String), (StatusCode, Json<Value>)> {
+    let node_data = match mothership_db.get(topic_name.clone().into_bytes()) {
+        Ok(o) => match o {
+            Some(node_data) => match to_string(node_data) {
+                Some(node_data) => node_data,
+                None => {
+                    return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))));
+                }
+            },
+            None => return Err((StatusCode::BAD_REQUEST, Json(json!({})))),
+        },
+        Err(_) => {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))));
+        }
+    };
+
+    let mut data_split = node_data.split("|");
+    let node_address = match data_split.next() {
+        Some(addr) => addr,
+        None => {
+            event!(
+                Level::ERROR,
+                message = "bad data in mothership entry",
+                topic_name,
+                node_data,
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "bad data for mothership entry"})),
+            ));
+        }
+    };
+    let node_id = match data_split.next() {
+        Some(id) => id,
+        None => {
+            event!(
+                Level::ERROR,
+                message = "bad data in mothership entry",
+                topic_name,
+                node_data,
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "bad data for mothership entry"})),
+            ));
+        }
+    };
+    Ok((node_address.to_string(), node_id.to_string()))
+}
+
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -372,55 +425,14 @@ async fn topic_stats_handler(
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
     if let Some(db) = state.mothership_db.clone() {
-        // mothership proxy code
-        let node_data = match db.get(topic_name.clone().into_bytes()) {
-            Ok(o) => match o {
-                Some(node_data) => match to_string(node_data) {
-                    Some(node_data) => node_data,
-                    None => {
-                        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
-                    }
-                },
-                None => return (StatusCode::BAD_REQUEST, Json(json!({}))),
-            },
-            Err(_) => {
-                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
-            }
+        //
+        let (node_address, node_id) = match get_topic_node_info(topic_name.clone(), db) {
+            Ok((addr, id)) => (addr, id),
+            Err(e) => return e, // http error back to caller
         };
 
         let client = reqwest::Client::new();
-        let mut data_split = node_data.split("|");
-        let node_address = match data_split.next() {
-            Some(addr) => addr,
-            None => {
-                event!(
-                    Level::ERROR,
-                    message = "bad data in mothership entry",
-                    topic_name,
-                    node_data,
-                );
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "bad data for mothership entry"})),
-                );
-            }
-        };
-        let node_id = match data_split.next() {
-            Some(id) => id,
-            None => {
-                event!(
-                    Level::ERROR,
-                    message = "bad data in mothership entry",
-                    topic_name,
-                    node_data,
-                );
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "bad data for mothership entry"})),
-                );
-            }
-        };
-
+        let topic_name = topic_name.clone();
         let url = format!("http://{node_address}/stats/{topic_name}");
         match client.get(url).send().await {
             Ok(resp) => {
