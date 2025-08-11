@@ -372,77 +372,116 @@ async fn topic_stats_handler(
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
     if let Some(db) = state.mothership_db.clone() {
-        match db.get(topic_name.into_bytes()) {
-            Ok(o) => {
-                match o {
-                    Some(node_data) => {
-                        // get address from node data
-                        // send http request
-                        let client = reqwest::Client::new(); // do i need to reuse client per node/topic
-                        let node_data = match to_string(node_data) {
-                            Some(d) => d,
-                            None => {
-                                return (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(json!({"error": "something went wrong"})),
-                                );
-                            }
-                        };
-
-                        let data_split = node_data.split("|");
-                        let node_address = match data_split.next() {
-                            Some(addr) => addr,
-                            None => {
-                                event!(
-                                    Level::ERROR,
-                                    message = "bad data in mothership entry",
-                                    topic_name
-                                );
-                                return (
-                                    StatusCode::INTERNAL_SERVER_ERROR,
-                                    Json(json!({"error": "bad data for mothership entry"})),
-                                );
-                            }
-                        };
-                        let node_id = data_split.next();
-
-                        let url = format!("http://{node_address}/stats/{topic_name}");
-                        let resp = match client.get(url).send().await {
-                            Ok(resp) => {
-                                // respond with same status code and json
-                            }
-                            Err(e) => {
-                                event!(
-                                    Level::ERROR,
-                                    message = "call to node failed",
-                                    node_address,
-                                    node_id
-                                );
-                                return (
-                                    StatusCode::BAD_GATEWAY,
-                                    Json(json!({"error": "failed to contact child node"})),
-                                );
-                            }
-                        };
-                    }
-                }
+        let node_data = match db.get(topic_name.clone().into_bytes()) {
+            Ok(o) => match o {
+                Some(node_data) => node_data,
+                None => return (StatusCode::BAD_REQUEST, Json(json!({}))),
+            },
+            Err(e) => {
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})));
             }
         };
-        return (StatusCode::OK, Json(json!({"ok": "yes"})));
+        let client = reqwest::Client::new();
     };
 
-    match state.topic_db_map.get(&topic_name) {
-        Some(topic) => (
-            StatusCode::OK,
-            Json(json!({"topic_name": topic_name, "topic_length" : topic.topic_tree.len()})),
-        ),
-
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(json!("error: could not find topic: {topic_name}")),
-        ),
-    }
+    (StatusCode::OK, Json(json!({})))
 }
+// get address from node data
+//
+// send http request
+//                         // let client = reqwest::Client::new(); // do i need to reuse client per node/topic
+//                         // let node_data = match to_string(node_data) {
+//                         //     Some(d) => d,
+//                         //     None => {
+//                         //         return (
+//                         //             StatusCode::INTERNAL_SERVER_ERROR,
+//                         //             Json(json!({"error": "something went wrong"})),
+//                         //         );
+//                         //     }
+//                         // };
+
+//                         // let mut data_split = node_data.split("|");
+//                         // let node_address = match data_split.next() {
+//                         //     Some(addr) => addr,
+//                         //     None => {
+//                         //         event!(
+//                         //             Level::ERROR,
+//                         //             message = "bad data in mothership entry",
+//                         //             topic_name
+//                         //         );
+//                         //         return (
+//                         //             StatusCode::INTERNAL_SERVER_ERROR,
+//                         //             Json(json!({"error": "bad data for mothership entry"})),
+//                         //         );
+//                         //     }
+//                         // };
+//                         // let node_id = data_split.next();
+
+//                         // let url = format!("http://{node_address}/stats/{topic_name}");
+//                         match client.get(url).send().await {
+//                             Ok(resp) => {
+//                                 let status_code = resp.status();
+//                                 match resp.text().await {
+//                                     Ok(r) => {
+//                                         match serde_json::from_str(&r) {
+//                                             Ok(j) => {
+//                                                 return (status_code, Json(j));
+//                                             }
+//                                             Err(e) => {
+//                                                 event!(
+//                                                     Level::ERROR,
+//                                                     message = "failed to get a serde json value from resp text",
+//                                                     node_address,
+//                                                     topic_name,
+//                                                     node_id
+//                                                 );
+//                                                 return (StatusCode::BAD_GATEWAY, Json(json!({})));
+//                                             }
+//                                         };
+//                                     }
+//                                     Err(e) => {
+//                                         event!(
+//                                             Level::ERROR,
+//                                             message = "failed to get text from response?",
+//                                             node_address,
+//                                             topic_name
+//                                         );
+//                                         return (
+//                                             StatusCode::BAD_GATEWAY,
+//                                             Json(
+//                                                 json!({"error": "failed to read response from child node"}),
+//                                             ),
+//                                         );
+//                                     }
+//                                 }
+//                             }
+//                             Err(e) => {
+//                                 event!(
+//                                     Level::ERROR,
+//                                     message = "call to node failed",
+//                                     node_address,
+//                                     node_id
+//                                 );
+//                                 return (
+//                                     StatusCode::BAD_GATEWAY,
+//                                     Json(json!({"error": "failed to contact child node"})),
+//                                 );
+//                             }
+//                         };
+//     };
+
+//     match state.topic_db_map.get(&topic_name) {
+//         Some(topic) => (
+//             StatusCode::OK,
+//             Json(json!({"topic_name": topic_name, "topic_length" : topic.topic_tree.len()})),
+//         ),
+
+//         None => (
+//             StatusCode::NOT_FOUND,
+//             Json(json!("error: could not find topic: {topic_name}")),
+//         ),
+//     }
+// }
 
 async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
