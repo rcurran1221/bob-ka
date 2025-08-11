@@ -2,20 +2,18 @@ use axum::Json;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
-use axum::serve::IncomingStream;
 use axum::{Router, http::StatusCode, routing::get};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
-use std::net::{SocketAddr, TcpListener};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
-use tracing::{Instrument, Level, event, info, span};
+use tracing::{Level, event, info, span};
 use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -61,7 +59,6 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         }
 
         // todo - build the mother ship api to handle this register call?
-        // for some reason, i find x + d combination to remove line to be very uncomfortable
         if let Some(addr) = topic.mothership_address.clone() {
             tokio::task::spawn({
                 let topic_name = topic.name.clone();
@@ -302,7 +299,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         .route("/stats/{topic_name}", get(topic_stats_handler))
         .route("/register", post(register_node_handler)) // todo - how to conditionally add route
         .with_state(shared_state)
-        .into_make_service_with_connect_info::<ConnectInfo<SocketAddr>>();
+        .into_make_service_with_connect_info::<SocketAddr>();
 
     // Run the server
     let addr = format!("0.0.0.0:{}", config.web_config.port);
