@@ -437,44 +437,45 @@ async fn topic_stats_handler(
             let topic_name = topic_name.clone();
             let url = format!("http://{node_address}{url_path}"); // todo - make "child node https" a config point
             match client.get(url).send().await {
-                Ok(resp) => {
-                    let status_code = resp.status();
-                    let resp_text = match resp.text().await {
-                        Ok(t) => t,
-                        Err(_) => {
-                            event!(
-                                Level::ERROR,
-                                message = "could not read text on response",
-                                node_address,
-                                topic_name,
-                                node_id,
-                            );
-                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                        }
-                    };
-
-                    let resp_json = match serde_json::from_str(&resp_text) {
-                        Ok(r) => r,
-                        Err(_) => {
-                            event!(
-                                Level::ERROR,
-                                message = "unable to convert resp to json value",
-                            );
-                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                        }
-                    };
-
-                    return (status_code, Json(resp_json));
-                }
-                Err(_) => {
+                Err(e) => {
                     event!(
                         Level::ERROR,
                         message = "failed to contact child node",
                         node_address,
                         topic_name,
                         node_id,
+                        error = e.to_string(),
                     );
                     return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                }
+                Ok(resp) => {
+                    let status_code = resp.status();
+                    let resp_text = match resp.text().await {
+                        Err(e) => {
+                            event!(
+                                Level::ERROR,
+                                message = "could not read text on response",
+                                node_address,
+                                topic_name,
+                                node_id,
+                                error = e.to_string(),
+                            );
+                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                        }
+                        Ok(t) => t,
+                    };
+
+                    match serde_json::from_str(&resp_text) {
+                        Err(e) => {
+                            event!(
+                                Level::ERROR,
+                                message = "unable to convert resp to json value",
+                                error = e.to_string(),
+                            );
+                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                        }
+                        Ok(r) => return (status_code, Json(r)),
+                    };
                 }
             };
         }
