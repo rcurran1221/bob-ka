@@ -319,11 +319,28 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
+#[derive(Serialize, Deserialize)]
+struct RegisterRequest {
+    topic_name: String,
+    node_id: String,
+}
+
 async fn register_node_handler(
-    Path((node_id, topic_name)): Path<(String, String)>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
+    Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    let request: RegisterRequest = match serde_json::from_value(payload) {
+        Err(e) => {
+            event!(
+                Level::ERROR,
+                message = "failed to convert register payload to RegisterRequest Type"
+            );
+
+            return (StatusCode:::w
+        )
+        }
+    };
     let node_address = addr.to_string();
 
     match state.mothership_db.clone() {
