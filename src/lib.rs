@@ -422,56 +422,65 @@ async fn topic_stats_handler(
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
     if let Some(db) = state.mothership_db.clone() {
-        //
         let (node_address, node_id) = match get_topic_node_info(topic_name.clone(), db) {
             Ok((addr, id)) => (addr, id),
             Err(e) => return e, // http error back to caller
         };
 
-        let client = reqwest::Client::new();
-        let topic_name = topic_name.clone();
-        let url = format!("http://{node_address}/stats/{topic_name}");
-        match client.get(url).send().await {
-            Ok(resp) => {
-                let status_code = resp.status();
-                let resp_text = match resp.text().await {
-                    Ok(t) => t,
-                    Err(_) => {
-                        event!(
-                            Level::ERROR,
-                            message = "could not read text on response",
-                            node_address,
-                            topic_name,
-                            node_id,
-                        );
-                        return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                    }
-                };
+        async fn forward_to_child(
+            topic_name: String,
+            node_address: String,
+            node_id: String,
+            url_path: String,
+        ) -> (StatusCode, Json<Value>) {
+            let client = reqwest::Client::new(); // client re-use per child node for tcp connection caching
+            let topic_name = topic_name.clone();
+            let url = format!("http://{node_address}{url_path}"); // todo - make "child node https" a config point
+            match client.get(url).send().await {
+                Ok(resp) => {
+                    let status_code = resp.status();
+                    let resp_text = match resp.text().await {
+                        Ok(t) => t,
+                        Err(_) => {
+                            event!(
+                                Level::ERROR,
+                                message = "could not read text on response",
+                                node_address,
+                                topic_name,
+                                node_id,
+                            );
+                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                        }
+                    };
 
-                let resp_json = match serde_json::from_str(&resp_text) {
-                    Ok(r) => r,
-                    Err(_) => {
-                        event!(
-                            Level::ERROR,
-                            message = "unable to convert resp to json value",
-                        );
-                        return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                    }
-                };
+                    let resp_json = match serde_json::from_str(&resp_text) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            event!(
+                                Level::ERROR,
+                                message = "unable to convert resp to json value",
+                            );
+                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                        }
+                    };
 
-                return (status_code, Json(resp_json));
-            }
-            Err(_) => {
-                event!(
-                    Level::ERROR,
-                    message = "failed to contact child node",
-                    node_address,
-                    topic_name,
-                    node_id,
-                );
-                return (StatusCode::BAD_GATEWAY, Json(json!({})));
-            }
-        };
+                    return (status_code, Json(resp_json));
+                }
+                Err(_) => {
+                    event!(
+                        Level::ERROR,
+                        message = "failed to contact child node",
+                        node_address,
+                        topic_name,
+                        node_id,
+                    );
+                    return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                }
+            };
+        }
+
+        let url_path = format!("/stats/{topic_name}");
+        return forward_to_child(topic_name, node_address, node_id, url_path).await;
     }
 
     // non-mothership path
