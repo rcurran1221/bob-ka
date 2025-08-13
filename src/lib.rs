@@ -437,7 +437,6 @@ async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // how to differentiate logs between mothership and child nodes?
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
     if let Some(db) = state.mothership_db.clone() {
@@ -445,59 +444,6 @@ async fn topic_stats_handler(
             Ok((addr, id)) => (addr, id),
             Err(e) => return e, // http error back to caller
         };
-
-        async fn forward_to_child(
-            topic_name: String,
-            node_address: String,
-            node_id: String,
-            url_path: String,
-        ) -> (StatusCode, Json<Value>) {
-            let client = reqwest::Client::new(); // client re-use per child node for tcp connection caching
-            let topic_name = topic_name.clone();
-            let url = format!("http://{node_address}{url_path}"); // todo - make "child node https" a config point
-            match client.get(url).send().await {
-                Err(e) => {
-                    event!(
-                        Level::ERROR,
-                        message = "failed to contact child node",
-                        node_address,
-                        topic_name,
-                        node_id,
-                        error = e.to_string(),
-                    );
-                    return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                }
-                Ok(resp) => {
-                    let status_code = resp.status();
-                    let resp_text = match resp.text().await {
-                        Err(e) => {
-                            event!(
-                                Level::ERROR,
-                                message = "could not read text on response",
-                                node_address,
-                                topic_name,
-                                node_id,
-                                error = e.to_string(),
-                            );
-                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                        }
-                        Ok(t) => t,
-                    };
-
-                    match serde_json::from_str(&resp_text) {
-                        Err(e) => {
-                            event!(
-                                Level::ERROR,
-                                message = "unable to convert resp to json value",
-                                error = e.to_string(),
-                            );
-                            return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                        }
-                        Ok(r) => return (status_code, Json(r)),
-                    };
-                }
-            };
-        }
 
         let url_path = format!("/stats/{topic_name}");
         return forward_to_child(topic_name, node_address, node_id, url_path).await;
@@ -512,11 +458,84 @@ async fn topic_stats_handler(
 
         None => (
             StatusCode::NOT_FOUND,
-            Json(json!("error: could not find topic: {topic_name}")),
+            Json(json!({"error": "could not find topic", "topic_name": topic_name})),
         ),
     }
 }
 
+async fn forward_to_child(
+    topic_name: String,
+    node_address: String,
+    node_id: String,
+    url_path: String,
+) -> (StatusCode, Json<Value>) {
+    let client = reqwest::Client::new(); // todo - client re-use per child node for tcp connection caching
+    let topic_name = topic_name.clone();
+    let url = format!("http://{node_address}{url_path}"); // todo - make "child node https" a config point
+
+    event!(
+        Level::INFO,
+        message = "mothership forwarding request to child node",
+        node_address,
+        node_id,
+        topic_name
+    );
+
+    match client.get(url).send().await {
+        Err(e) => {
+            event!(
+                Level::ERROR,
+                message = "failed to contact child node",
+                node_address,
+                topic_name,
+                node_id,
+                error = e.to_string(),
+            );
+            return (StatusCode::BAD_GATEWAY, Json(json!({})));
+        }
+        Ok(resp) => {
+            let status_code = resp.status();
+            let resp_text = match resp.text().await {
+                Err(e) => {
+                    event!(
+                        Level::ERROR,
+                        message = "could not read text on response",
+                        node_address,
+                        topic_name,
+                        node_id,
+                        error = e.to_string(),
+                    );
+                    return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                }
+                Ok(t) => t,
+            };
+
+            match serde_json::from_str(&resp_text) {
+                Err(e) => {
+                    event!(
+                        Level::ERROR,
+                        message = "unable to convert resp to json value",
+                        error = e.to_string(),
+                    );
+                    return (StatusCode::BAD_GATEWAY, Json(json!({})));
+                }
+                Ok(resp_json) => {
+                    event!(
+                        Level::INFO,
+                        message =
+                            "successfully forwarded request and recevied resp from child node",
+                        node_address,
+                        node_id,
+                        topic_name
+                    );
+                    return (status_code, Json(resp_json));
+                }
+            };
+        }
+    };
+}
+
+// post w/ url params
 async fn ack_handler(
     Path((topic_name, consumer_id, ack_msg_id)): Path<(String, String, u64)>,
     State(state): State<Arc<AppState>>,
@@ -529,6 +548,18 @@ async fn ack_handler(
         consumer_id,
         ack_msg_id
     );
+    if let Some(db) = state.mothership_db.clone() {
+        let (node_address, node_id) = match get_topic_node_info(topic_name.clone(), db) {
+            Ok((addr, id)) => (addr, id),
+            Err(e) => return e.0, // http error back to caller
+        };
+
+        let url_path = format!("/ack/{topic_name}/{consumer_id}/{ack_msg_id}");
+        // need new function here
+        // return forward_to_child(topic_name, node_address, node_id, url_path).await;
+
+        return StatusCode::OK;
+    }
 
     let state_key = &format!("{topic_name}-{consumer_id}");
     let new_consumer_state = ack_msg_id + 1;
