@@ -64,6 +64,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
                 tokio::task::spawn({
                     let topic_name = topic.name.clone();
                     let node_id = node_id.clone();
+                    let node_port = config.web_config.port.clone();
                     async move {
                         event!(
                             Level::INFO,
@@ -77,7 +78,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
                         loop {
                             let should_retry = match client
                                 .post(format!("{addr}/register"))
-                                .json(&json!({ "node_id": node_id , "topic_name": topic_name}))
+                                .json(&json!({ "node_id": node_id , "topic_name": topic_name,
+                                     "node_port": node_port}))
                                 .send()
                                 .await
                             {
@@ -252,19 +254,26 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     }
 
     // dont do this if mothership, this means consume_state db becomes option on app state
-    event!(Level::INFO, "opening consumer state db");
+    let consumer_state_db = match config.mothership {
+        Some(_) => None,
+        None => {
+            event!(Level::INFO, "opening consumer state db");
 
-    let consumer_state_config = Config::new().path("consumer_state");
+            let consumer_state_config = Config::new().path("consumer_state");
 
-    let consumer_state_db: Db = match consumer_state_config.open() {
-        Ok(db) => db,
-        Err(e) => panic!("unable to open consumer statedb: {e}"),
+            let consumer_state_db: Db = match consumer_state_config.open() {
+                Ok(db) => db,
+                Err(e) => panic!("unable to open consumer statedb: {e}"),
+            };
+
+            event!(
+                Level::INFO,
+                message = "successfully opened consumer state db",
+            );
+
+            Some(consumer_state_db)
+        }
     };
-
-    event!(
-        Level::INFO,
-        message = "successfully opened consumer state db",
-    );
 
     let mothership_db = match config.mothership {
         Some(_) => {
@@ -323,26 +332,15 @@ async fn health() {}
 struct RegisterRequest {
     topic_name: String,
     node_id: String,
+    node_port: usize,
 }
 
 async fn register_node_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<serde_json::Value>,
+    Json(request): Json<RegisterRequest>,
 ) -> impl IntoResponse {
-    let request: RegisterRequest = match serde_json::from_value(payload) {
-        Err(e) => {
-            event!(
-                Level::ERROR,
-                message = "failed to convert register payload to RegisterRequest Type",
-                error = e.to_string(),
-            );
-
-            return StatusCode::BAD_REQUEST;
-        }
-        Ok(request) => request,
-    };
-    let node_address = addr.to_string(); // ip:port i believe
+    let node_address = format!("{}:{}", addr.ip(), request.node_port); // ip:port i believe
 
     let topic_name = request.topic_name;
     let node_id = request.node_id;
@@ -537,6 +535,8 @@ async fn ack_handler(
 
     let previous_consumer_state = match state
         .consumer_state_db
+        .clone()
+        .unwrap() // todo
         .insert(state_key, IVec::from(&new_consumer_state.to_be_bytes()))
     {
         Ok(s) => match s {
@@ -794,7 +794,7 @@ async fn consume_handler(
     };
 
     let state_key = format!("{topic_name}-{consumer_id}");
-    let next_msg = match state.consumer_state_db.get(&state_key) {
+    let next_msg = match state.consumer_state_db.clone().unwrap().get(&state_key) {
         Ok(msg_id_opt) => match msg_id_opt {
             Some(msg_i) => msg_i,
             None => {
@@ -947,7 +947,7 @@ struct Message {
 #[derive(Debug)]
 struct AppState {
     topic_db_map: HashMap<String, BobTopic>,
-    consumer_state_db: Db,
+    consumer_state_db: Option<Db>,
     mothership_db: Option<Db>,
 }
 
