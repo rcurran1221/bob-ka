@@ -9,21 +9,11 @@ compression = true # compress data at rest
 cap = 100 # approx max length of topic before trim, smaller topics = faster reads/writers but less data
 cap_tolerance = 10 # how many messages beyond cap you can tolerate
 backoff_dialation_ms = 1000 # amount of time to hold response to consumer when no new messages
+mothership_address = "http://localhost:8012"
 
 [[topics]]
 name = "topic2"
 compression = true
 backoff_dialation_ms = 1000
 time_based_retention = 60 # retain 60 minutes of messages per topic, instead of count based
-
-# or
-title = "boblog mothership"
-
-[web_config]
-port = 8012
-
-[mothership]
-is_mothership = true # this enables node as a "mothership"
-
-# no topics when mothership
-
+mothership_address = "http://localhost:8012"

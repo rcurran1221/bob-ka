@@ -47,213 +47,214 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
     let mut topic_db_map = HashMap::new();
     // iterate over topics, create dbs if they don't exist
-    for topic in config.topics.iter() {
-        info!("found topic: {}", topic.name);
-        info!("enable compression: {}", topic.compression);
-        info!("topic cap: {:?}", topic.cap);
-        info!("topic_cap_tolerance: {:?}", topic.cap_tolerance);
-        info!("backoff_dialation_ms: {:?}", topic.backoff_dialation_ms);
+    if let Some(topics) = config.topics {
+        for topic in topics.iter() {
+            info!("found topic: {}", topic.name);
+            info!("enable compression: {}", topic.compression);
+            info!("topic cap: {:?}", topic.cap);
+            info!("topic_cap_tolerance: {:?}", topic.cap_tolerance);
+            info!("backoff_dialation_ms: {:?}", topic.backoff_dialation_ms);
 
-        if topic.name == "consumer_state" {
-            panic!("cannot have a topic named consumer_state");
-        }
+            if topic.name == "consumer_state" {
+                panic!("cannot have a topic named consumer_state");
+            }
 
-        // todo - build the mother ship api to handle this register call?
-        if let Some(addr) = topic.mothership_address.clone() {
-            tokio::task::spawn({
-                let topic_name = topic.name.clone();
-                let node_id = node_id.clone();
-                async move {
-                    event!(
-                        Level::INFO,
-                        message = "this node will phone home to mothership",
-                        topic_name = topic_name,
-                        address = addr,
-                        node_id,
-                    );
-                    let client = reqwest::Client::new();
-
-                    loop {
-                        let should_retry = match client
-                            .post(format!("{addr}/register"))
-                            .json(&json!({ "node_id": node_id , "topic_name": topic_name}))
-                            .send()
-                            .await
-                        {
-                            Ok(resp) => {
-                                if resp.status() != StatusCode::OK {
-                                    event!(
-                                        Level::ERROR,
-                                        message = "call home failed",
-                                        status_code = resp.status().to_string(),
-                                    );
-                                    true
-                                } else {
-                                    event!(
-                                        Level::INFO,
-                                        message = "successfully called home",
-                                        address = addr,
-                                        node_id = node_id
-                                    );
-                                    false
-                                }
-                            }
-                            Err(e) => {
-                                event!(
-                                    Level::ERROR,
-                                    message = "failed to send request home",
-                                    error = e.to_string()
-                                );
-                                true
-                            }
-                        };
-
-                        if !should_retry {
-                            break;
-                        }
+            // todo - build the mother ship api to handle this register call?
+            if let Some(addr) = topic.mothership_address.clone() {
+                tokio::task::spawn({
+                    let topic_name = topic.name.clone();
+                    let node_id = node_id.clone();
+                    async move {
                         event!(
-                            Level::WARN,
-                            message = "retrying call to mothership...",
+                            Level::INFO,
+                            message = "this node will phone home to mothership",
+                            topic_name = topic_name,
+                            address = addr,
                             node_id,
                         );
+                        let client = reqwest::Client::new();
 
-                        sleep(Duration::from_millis(1000)).await;
+                        loop {
+                            let should_retry = match client
+                                .post(format!("{addr}/register"))
+                                .json(&json!({ "node_id": node_id , "topic_name": topic_name}))
+                                .send()
+                                .await
+                            {
+                                Ok(resp) => {
+                                    if resp.status() != StatusCode::OK {
+                                        event!(
+                                            Level::ERROR,
+                                            message = "call home failed",
+                                            status_code = resp.status().to_string(),
+                                        );
+                                        true
+                                    } else {
+                                        event!(
+                                            Level::INFO,
+                                            message = "successfully called home",
+                                            address = addr,
+                                            node_id = node_id
+                                        );
+                                        false
+                                    }
+                                }
+                                Err(e) => {
+                                    event!(
+                                        Level::ERROR,
+                                        message = "failed to send request home",
+                                        error = e.to_string()
+                                    );
+                                    true
+                                }
+                            };
+
+                            if !should_retry {
+                                break;
+                            }
+                            event!(
+                                Level::WARN,
+                                message = "retrying call to mothership...",
+                                node_id,
+                            );
+
+                            sleep(Duration::from_millis(1000)).await;
+                        }
+                    }
+                });
+            }
+
+            let topic_name = topic.name.clone();
+            let topic_compression = topic.compression;
+            let topic_temporary = topic.temporary;
+
+            let sled_config = Config::new()
+                .use_compression(topic.compression)
+                .path(topic.name.clone())
+                .temporary(topic.temporary);
+
+            let db: Db = match sled_config.open() {
+                Ok(db) => db,
+                Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
+            };
+
+            if topic_db_map.contains_key(&topic.name) {
+                panic!("topic name: {} declared twice", topic.name)
+            }
+
+            let topic_tree = match db.open_tree("topic") {
+                Ok(t) => t,
+                Err(e) => panic!(
+                    "unable to open topic tree for topic:{}, error:{}",
+                    topic.name.clone(),
+                    e
+                ),
+            };
+            let timestamp_tree = match db.open_tree("timestamp") {
+                Ok(t) => t,
+                Err(e) => panic!(
+                    "unable to open timestamp tree for topic: {}, error: {}",
+                    topic.name.clone(),
+                    e
+                ),
+            };
+
+            // set up post produce events
+            let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
+
+            // one trim task per topic
+            tokio::task::spawn({
+                let topic_cap = topic.cap;
+                let topic_cap_tolerance = topic.cap_tolerance;
+                let topic_time_retention = topic.time_based_retention;
+                async move {
+                    loop {
+                        match tx.recv().await {
+                            Some((topic_name, _)) => {
+                                let start = Instant::now();
+                                match topic_time_retention {
+                                    Some(t) => {
+                                        trim_tail_time(
+                                            topic_name,
+                                            t,
+                                            topic_tree.clone(),
+                                            timestamp_tree.clone(),
+                                        );
+                                    }
+                                    None => {
+                                        trim_trail(
+                                            topic_name,
+                                            topic_cap,
+                                            topic_cap_tolerance,
+                                            topic_tree.clone(),
+                                        );
+                                    }
+                                }
+
+                                let duration = Instant::now().duration_since(start);
+                                event!(
+                                    Level::INFO,
+                                    message = "succesfully trimmed topic tail",
+                                    duration = format!("{:?}", duration)
+                                )
+                            }
+                            None => return, //channel is closed, pack it up
+                        };
                     }
                 }
             });
+
+            let stats_tree = match db.open_tree("stats") {
+                Ok(t) => t,
+                Err(e) => panic!(
+                    "unable to open stats tree for topic:{}, error:{}",
+                    topic.name.clone(),
+                    e
+                ),
+            };
+
+            let topic_tree = match db.open_tree("topic") {
+                Ok(t) => t,
+                Err(e) => panic!(
+                    "unable to open topic tree for topic:{}, error:{}",
+                    topic.name.clone(),
+                    e
+                ),
+            };
+
+            let timestamp_tree = match db.open_tree("timestamp") {
+                Ok(t) => t,
+                Err(e) => panic!(
+                    "unable to open timestamp tree for topic: {}, error: {}",
+                    topic.name.clone(),
+                    e
+                ),
+            };
+            let bob_topic = BobTopic {
+                stats_tree,
+                topic_tree,
+                top_db: db,
+                timestamp_tree,
+                topic_config: topic.clone(),
+                event_sender: rx,
+            };
+
+            topic_db_map.insert(topic.name.clone(), bob_topic);
+
+            event!(
+                Level::INFO,
+                message = "successfully created topic",
+                topic_name = topic_name.clone(),
+                topic_compression,
+                topic_temporary
+            )
         }
-
-        let topic_name = topic.name.clone();
-        let topic_compression = topic.compression;
-        let topic_temporary = topic.temporary;
-
-        let sled_config = Config::new()
-            .use_compression(topic.compression)
-            .path(topic.name.clone())
-            .temporary(topic.temporary);
-
-        let db: Db = match sled_config.open() {
-            Ok(db) => db,
-            Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
-        };
-
-        if topic_db_map.contains_key(&topic.name) {
-            panic!("topic name: {} declared twice", topic.name)
-        }
-
-        let topic_tree = match db.open_tree("topic") {
-            Ok(t) => t,
-            Err(e) => panic!(
-                "unable to open topic tree for topic:{}, error:{}",
-                topic.name.clone(),
-                e
-            ),
-        };
-        let timestamp_tree = match db.open_tree("timestamp") {
-            Ok(t) => t,
-            Err(e) => panic!(
-                "unable to open timestamp tree for topic: {}, error: {}",
-                topic.name.clone(),
-                e
-            ),
-        };
-
-        // set up post produce events
-        let (rx, mut tx) = tokio::sync::mpsc::channel::<(String, u64)>(100);
-
-        // one trim task per topic
-        tokio::task::spawn({
-            let topic_cap = topic.cap;
-            let topic_cap_tolerance = topic.cap_tolerance;
-            let topic_time_retention = topic.time_based_retention;
-            async move {
-                loop {
-                    match tx.recv().await {
-                        Some((topic_name, _)) => {
-                            let start = Instant::now();
-                            match topic_time_retention {
-                                Some(t) => {
-                                    trim_tail_time(
-                                        topic_name,
-                                        t,
-                                        topic_tree.clone(),
-                                        timestamp_tree.clone(),
-                                    );
-                                }
-                                None => {
-                                    trim_trail(
-                                        topic_name,
-                                        topic_cap,
-                                        topic_cap_tolerance,
-                                        topic_tree.clone(),
-                                    );
-                                }
-                            }
-
-                            let duration = Instant::now().duration_since(start);
-                            event!(
-                                Level::INFO,
-                                message = "succesfully trimmed topic tail",
-                                duration = format!("{:?}", duration)
-                            )
-                        }
-                        None => return, //channel is closed, pack it up
-                    };
-                }
-            }
-        });
-
-        let stats_tree = match db.open_tree("stats") {
-            Ok(t) => t,
-            Err(e) => panic!(
-                "unable to open stats tree for topic:{}, error:{}",
-                topic.name.clone(),
-                e
-            ),
-        };
-
-        let topic_tree = match db.open_tree("topic") {
-            Ok(t) => t,
-            Err(e) => panic!(
-                "unable to open topic tree for topic:{}, error:{}",
-                topic.name.clone(),
-                e
-            ),
-        };
-
-        let timestamp_tree = match db.open_tree("timestamp") {
-            Ok(t) => t,
-            Err(e) => panic!(
-                "unable to open timestamp tree for topic: {}, error: {}",
-                topic.name.clone(),
-                e
-            ),
-        };
-        let bob_topic = BobTopic {
-            stats_tree,
-            topic_tree,
-            top_db: db,
-            timestamp_tree,
-            topic_config: topic.clone(),
-            event_sender: rx,
-        };
-
-        topic_db_map.insert(topic.name.clone(), bob_topic);
-
-        event!(
-            Level::INFO,
-            message = "successfully created topic",
-            topic_name = topic_name.clone(),
-            topic_compression,
-            topic_temporary
-        )
     }
 
+    // dont do this if mothership, this means consume_state db becomes option on app state
     event!(Level::INFO, "opening consumer state db");
 
-    let consumer_state_config = Config::new()
-        .path("consumer_state")
-        .temporary(config.temp_consumer_state);
+    let consumer_state_config = Config::new().path("consumer_state");
 
     let consumer_state_db: Db = match consumer_state_config.open() {
         Ok(db) => db,
@@ -263,11 +264,10 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     event!(
         Level::INFO,
         message = "successfully opened consumer state db",
-        config.temp_consumer_state
     );
 
-    let mothership_db = match config.mothership.is_mothership {
-        true => {
+    let mothership_db = match config.mothership {
+        Some(_) => {
             let mothership_db = match Config::new().path("mothership_db").open() {
                 Ok(db) => db,
                 Err(e) => panic!("unable to open mothership db: {e}"),
@@ -275,7 +275,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
             Some(mothership_db)
         }
-        false => None,
+        None => None,
     };
 
     let shared_state = Arc::new(AppState {
@@ -334,16 +334,28 @@ async fn register_node_handler(
         Err(e) => {
             event!(
                 Level::ERROR,
-                message = "failed to convert register payload to RegisterRequest Type"
+                message = "failed to convert register payload to RegisterRequest Type",
+                error = e.to_string(),
             );
 
-            return (StatusCode:::w
-        )
+            return StatusCode::BAD_REQUEST;
         }
+        Ok(request) => request,
     };
-    let node_address = addr.to_string();
+    let node_address = addr.to_string(); // ip:port i believe
+
+    let topic_name = request.topic_name;
+    let node_id = request.node_id;
 
     match state.mothership_db.clone() {
+        None => {
+            event!(
+                Level::INFO,
+                message =
+                    "mothership db does not exist, should not have received a request to this url"
+            );
+            return StatusCode::BAD_REQUEST;
+        }
         Some(db) => {
             let data = format!("{node_address}|{node_id}");
             match db.insert(topic_name.clone().into_bytes(), data.into_bytes()) {
@@ -357,14 +369,6 @@ async fn register_node_handler(
                     return StatusCode::INTERNAL_SERVER_ERROR;
                 }
             };
-        }
-        None => {
-            event!(
-                Level::INFO,
-                message =
-                    "mothership db does not exist, should not have received a request to this url"
-            );
-            return StatusCode::BAD_REQUEST;
         }
     }
 
@@ -908,9 +912,8 @@ fn to_string(input: IVec) -> Option<String> {
 #[derive(Debug, Deserialize)]
 pub struct BobConfig {
     pub web_config: WebServerConfig,
-    pub topics: Vec<TopicConfig>,
-    pub mothership: MothershipConfig,
-    pub temp_consumer_state: bool,
+    pub topics: Option<Vec<TopicConfig>>,
+    pub mothership: Option<MothershipConfig>,
 }
 
 #[derive(Debug, Deserialize)]

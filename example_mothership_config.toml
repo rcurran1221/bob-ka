@@ -1,0 +1,10 @@
+title = "boblog mothership"
+
+[web_config]
+port = 8012
+
+[mothership]
+is_mothership = true # this enables node as a "mothership"
+
+# no topics when mothership
+

@@ -92,6 +92,48 @@ async fn test_quick_start() {
     // agnostic http rest apis, allowing you to deliver messages reliably in any environment
 }
 
+#[tokio::test]
+async fn test_mothership_basic() {
+    // write a few messages to test-topic-mothership-child directly
+    // call /stats/test-topic-mothership-child GET on mothership endpoint
+    // expect number of messages produced returned from mothership api
+    let client = Client::new();
+    let producer_name = "a";
+    for i in 0..20 {
+        // println!("producing {i} for {producer_name}");
+        let produce_resp = client
+            .post("http://localhost:8011/produce/test-topic-mothership-child")
+            .json(&Message {
+                event_name: format!("{producer_name}{i}").to_string(),
+                event_data: "this is data".to_string(),
+                event_num: i,
+            })
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(produce_resp.status(), StatusCode::OK);
+    }
+
+    let stats_resp = client
+        .get("http://localhost:8012/stats/test-topic-mothership-child")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(stats_resp.status(), StatusCode::OK);
+
+    let data: TopicInfo = stats_resp.json().await.unwrap();
+    assert_eq!(data.topic_name, "test-topic-mothership-child");
+    assert_eq!(data.topic_length, 20);
+}
+
+#[derive(Serialize, Deserialize)]
+struct TopicInfo {
+    topic_name: String,
+    topic_length: u64,
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_stress_test() {
     let n_workers = 100;
