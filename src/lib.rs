@@ -59,7 +59,6 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
                 panic!("cannot have a topic named consumer_state");
             }
 
-            // todo - build the mother ship api to handle this register call?
             if let Some(addr) = topic.mothership_address.clone() {
                 tokio::task::spawn({
                     let topic_name = topic.name.clone();
@@ -438,6 +437,7 @@ async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    // how to differentiate logs between mothership and child nodes?
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
     if let Some(db) = state.mothership_db.clone() {
