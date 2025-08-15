@@ -252,44 +252,23 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // dont do this if mothership, this means consume_state db becomes option on app state
-    let consumer_state_db = match config.mothership {
-        Some(_) => None,
-        None => {
-            event!(Level::INFO, "opening consumer state db");
+    event!(Level::INFO, "opening consumer state db");
 
-            let consumer_state_config = Config::new().path("consumer_state");
+    let consumer_state_config = Config::new().path("consumer_state");
 
-            let consumer_state_db: Db = match consumer_state_config.open() {
-                Ok(db) => db,
-                Err(e) => panic!("unable to open consumer statedb: {e}"),
-            };
-
-            event!(
-                Level::INFO,
-                message = "successfully opened consumer state db",
-            );
-
-            Some(consumer_state_db)
-        }
+    let consumer_state_db: Db = match consumer_state_config.open() {
+        Ok(db) => db,
+        Err(e) => panic!("unable to open consumer statedb: {e}"),
     };
 
-    let mothership_db = match config.mothership {
-        Some(_) => {
-            let mothership_db = match Config::new().path("mothership_db").open() {
-                Ok(db) => db,
-                Err(e) => panic!("unable to open mothership db: {e}"),
-            };
-
-            Some(mothership_db)
-        }
-        None => None,
-    };
+    event!(
+        Level::INFO,
+        message = "successfully opened consumer state db",
+    );
 
     let shared_state = Arc::new(AppState {
         topic_db_map,
         consumer_state_db,
-        mothership_db,
     });
 
     // Build the application with a route
@@ -305,9 +284,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
-        .route("/register", post(register_node_handler)) // todo - how to conditionally add route
-        .with_state(shared_state)
-        .into_make_service_with_connect_info::<SocketAddr>();
+        .with_state(shared_state);
 
     // Run the server
     let addr = format!("0.0.0.0:{}", config.web_config.port);
@@ -327,129 +304,12 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
-#[derive(Serialize, Deserialize)]
-struct RegisterRequest {
-    topic_name: String,
-    node_id: String,
-    node_port: usize,
-}
-
-async fn register_node_handler(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<RegisterRequest>,
-) -> impl IntoResponse {
-    let node_address = format!("{}:{}", addr.ip(), request.node_port); // ip:port i believe
-
-    let topic_name = request.topic_name;
-    let node_id = request.node_id;
-
-    match state.mothership_db.clone() {
-        None => {
-            event!(
-                Level::INFO,
-                message =
-                    "mothership db does not exist, should not have received a request to this url"
-            );
-            return StatusCode::BAD_REQUEST;
-        }
-        Some(db) => {
-            let data = format!("{node_address}|{node_id}");
-            match db.insert(topic_name.clone().into_bytes(), data.into_bytes()) {
-                Ok(_) => {}
-                Err(_) => {
-                    event!(
-                        Level::ERROR,
-                        message = "failed to insert into mothership db",
-                        topic_name = topic_name.clone(),
-                    );
-                    return StatusCode::INTERNAL_SERVER_ERROR;
-                }
-            };
-        }
-    }
-
-    event!(
-        Level::INFO,
-        message = "successfully registered node with mothership",
-        node_id,
-        node_address,
-        topic_name,
-    );
-
-    StatusCode::OK
-}
-
-fn get_topic_node_info(
-    topic_name: String,
-    mothership_db: Db,
-) -> Result<(String, String), (StatusCode, Json<Value>)> {
-    let node_data = match mothership_db.get(topic_name.clone().into_bytes()) {
-        Ok(o) => match o {
-            Some(node_data) => match to_string(node_data) {
-                Some(node_data) => node_data,
-                None => {
-                    return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))));
-                }
-            },
-            None => return Err((StatusCode::BAD_REQUEST, Json(json!({})))),
-        },
-        Err(_) => {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, Json(json!({}))));
-        }
-    };
-
-    let mut data_split = node_data.split("|");
-    let node_address = match data_split.next() {
-        Some(addr) => addr,
-        None => {
-            event!(
-                Level::ERROR,
-                message = "bad data in mothership entry",
-                topic_name,
-                node_data,
-            );
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "bad data for mothership entry"})),
-            ));
-        }
-    };
-    let node_id = match data_split.next() {
-        Some(id) => id,
-        None => {
-            event!(
-                Level::ERROR,
-                message = "bad data in mothership entry",
-                topic_name,
-                node_data,
-            );
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "bad data for mothership entry"})),
-            ));
-        }
-    };
-    Ok((node_address.to_string(), node_id.to_string()))
-}
-
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
-    if let Some(db) = state.mothership_db.clone() {
-        let (node_address, node_id) = match get_topic_node_info(topic_name.clone(), db) {
-            Ok((addr, id)) => (addr, id),
-            Err(e) => return e, // http error back to caller
-        };
-
-        let url_path = format!("/stats/{topic_name}");
-        return forward_to_child(topic_name, node_address, node_id, url_path).await;
-    }
-
-    // non-mothership path
     match state.topic_db_map.get(&topic_name) {
         Some(topic) => (
             StatusCode::OK,
@@ -461,78 +321,6 @@ async fn topic_stats_handler(
             Json(json!({"error": "could not find topic", "topic_name": topic_name})),
         ),
     }
-}
-
-async fn forward_to_child(
-    topic_name: String,
-    node_address: String,
-    node_id: String,
-    url_path: String,
-) -> (StatusCode, Json<Value>) {
-    let client = reqwest::Client::new(); // todo - client re-use per child node for tcp connection caching
-    let topic_name = topic_name.clone();
-    let url = format!("http://{node_address}{url_path}"); // todo - make "child node https" a config point
-
-    event!(
-        Level::INFO,
-        message = "mothership forwarding request to child node",
-        node_address,
-        node_id,
-        topic_name
-    );
-
-    match client.get(url).send().await {
-        Err(e) => {
-            event!(
-                Level::ERROR,
-                message = "failed to contact child node",
-                node_address,
-                topic_name,
-                node_id,
-                error = e.to_string(),
-            );
-            return (StatusCode::BAD_GATEWAY, Json(json!({})));
-        }
-        Ok(resp) => {
-            let status_code = resp.status();
-            let resp_text = match resp.text().await {
-                Err(e) => {
-                    event!(
-                        Level::ERROR,
-                        message = "could not read text on response",
-                        node_address,
-                        topic_name,
-                        node_id,
-                        error = e.to_string(),
-                    );
-                    return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                }
-                Ok(t) => t,
-            };
-
-            match serde_json::from_str(&resp_text) {
-                Err(e) => {
-                    event!(
-                        Level::ERROR,
-                        message = "unable to convert resp to json value",
-                        error = e.to_string(),
-                    );
-                    return (StatusCode::BAD_GATEWAY, Json(json!({})));
-                }
-                Ok(resp_json) => {
-                    event!(
-                        Level::INFO,
-                        message =
-                            "successfully forwarded request and recevied resp from child node",
-                        node_address,
-                        node_id,
-                        topic_name
-                    );
-                    return (status_code, Json(resp_json));
-                }
-            };
-        }
-    };
 }
 
 // post w/ url params
@@ -548,26 +336,12 @@ async fn ack_handler(
         consumer_id,
         ack_msg_id
     );
-    if let Some(db) = state.mothership_db.clone() {
-        let (node_address, node_id) = match get_topic_node_info(topic_name.clone(), db) {
-            Ok((addr, id)) => (addr, id),
-            Err(e) => return e.0, // http error back to caller
-        };
-
-        let url_path = format!("/ack/{topic_name}/{consumer_id}/{ack_msg_id}");
-        // need new function here
-        // return forward_to_child(topic_name, node_address, node_id, url_path).await;
-
-        return StatusCode::OK;
-    }
 
     let state_key = &format!("{topic_name}-{consumer_id}");
     let new_consumer_state = ack_msg_id + 1;
 
     let previous_consumer_state = match state
         .consumer_state_db
-        .clone()
-        .unwrap() // todo
         .insert(state_key, IVec::from(&new_consumer_state.to_be_bytes()))
     {
         Ok(s) => match s {
@@ -944,7 +718,6 @@ fn to_string(input: IVec) -> Option<String> {
 pub struct BobConfig {
     pub web_config: WebServerConfig,
     pub topics: Option<Vec<TopicConfig>>,
-    pub mothership: Option<MothershipConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -964,11 +737,6 @@ pub struct TopicConfig {
     pub mothership_address: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct MothershipConfig {
-    pub is_mothership: bool,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 struct Message {
     id: u64,
@@ -978,8 +746,7 @@ struct Message {
 #[derive(Debug)]
 struct AppState {
     topic_db_map: HashMap<String, BobTopic>,
-    consumer_state_db: Option<Db>,
-    mothership_db: Option<Db>,
+    consumer_state_db: Db,
 }
 
 #[derive(Debug)]
