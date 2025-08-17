@@ -249,10 +249,17 @@ async fn subscribe_handler(
 ) -> impl IntoResponse {
     match state.topic_db_map.get(&topic_name) {
         Some(topic) => {
-            let subscriber = topic.topic_tree.watch_prefix(vec![]);
+            let mut subscriber = topic.topic_tree.watch_prefix(vec![]);
+            tokio::task::spawn({
+                async move {
+                    loop {
+                        let event = (&mut subscriber).await;
+                    }
+                }
+            });
             // implement own "stream"
-            let sub_stream = SimpleStream {};
-            let sse = Sse::new(sub_stream).keep_alive(KeepAlive::default());
+            // let sub_stream = SimpleStream {};
+            // let sse = Sse::new(sub_stream).keep_alive(KeepAlive::default());
         }
         None => {}
     }
@@ -279,7 +286,7 @@ impl Stream for SimpleStream {
         match self.receiver.poll_recv(cx) {
             Poll::Ready(event) => match event {
                 Some(event) => Poll::Ready(Some(Ok(event))),
-                None => Poll::Ready(None),
+                None => Poll::Ready(None), // not sure about this
             },
             Poll::Pending => Poll::Pending,
         }
