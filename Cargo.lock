@@ -150,6 +150,7 @@ dependencies = [
  "axum",
  "chrono",
  "futures",
+ "futures-core",
  "hyper",
  "reqwest",
  "serde",

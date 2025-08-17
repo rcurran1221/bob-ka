@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
-use futures::stream;
+use futures::{FutureExt, Stream, stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
@@ -246,7 +246,12 @@ async fn subscribe_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     match state.topic_db_map.get(&topic_name) {
-        Some(topic) => {}
+        Some(topic) => {
+            let subscriber = topic.topic_tree.watch_prefix(vec![]);
+            // implement own "stream"
+            let sub_stream = SubStream { subscriber };
+            let sse = Sse::new(sub_stream).keep_alive(KeepAlive::default());
+        }
         None => {}
     }
     let stream = stream::repeat_with(|| Ok::<_, sled::Error>(Event::default().data("hi!")))
@@ -255,6 +260,20 @@ async fn subscribe_handler(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
+struct SubStream {
+    subscriber: sled::Subscriber,
+}
+
+impl futures_core::Stream for SubStream {
+    type Item = Result<Event, sled::Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.subscriber.poll(cx)
+    }
+}
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
