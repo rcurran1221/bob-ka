@@ -10,9 +10,11 @@ use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
 use std::collections::HashMap;
 use std::error::Error;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{self, Sender};
 use tokio::time::sleep;
 use tokio_stream::StreamExt as _;
 use tracing::{Level, event, info, span};
@@ -249,7 +251,7 @@ async fn subscribe_handler(
         Some(topic) => {
             let subscriber = topic.topic_tree.watch_prefix(vec![]);
             // implement own "stream"
-            let sub_stream = SubStream { subscriber };
+            let sub_stream = SimpleStream {};
             let sse = Sse::new(sub_stream).keep_alive(KeepAlive::default());
         }
         None => {}
@@ -259,21 +261,31 @@ async fn subscribe_handler(
 
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
-
-struct SubStream {
-    subscriber: sled::Subscriber,
+pub struct SimpleStream {
+    receiver: mpsc::Receiver<Event>,
 }
 
-impl futures_core::Stream for SubStream {
-    type Item = Result<Event, sled::Error>;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        self.subscriber.poll(cx)
+impl SimpleStream {
+    pub fn new() -> (Self, mpsc::Sender<Event>) {
+        let (tx, rx) = mpsc::channel(100);
+        (Self { receiver: rx }, tx)
     }
 }
+
+impl Stream for SimpleStream {
+    type Item = Result<Event, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.receiver.poll_recv(cx) {
+            Poll::Ready(event) => match event {
+                Some(event) => Poll::Ready(Some(Ok(event))),
+                None => Poll::Ready(None),
+            },
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
