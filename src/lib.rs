@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::response::IntoResponse;
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
 use futures::stream;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
+use tokio_stream::StreamExt as _;
 use tracing::{Level, event, info, span};
 use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
@@ -243,12 +245,16 @@ async fn subscribe_handler(
     Path((topic_name, consumer_id)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // A `Stream` that repeats an event every second
-    let stream = stream::repeat_with(|| Ok::<_, axum::Error>(Event::default().data("hi!")));
-
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    // // A `Stream` that repeats an event every second
+    // let stream = stream::repeat_with(|| Ok::<_, axum::Error>(Event::default().data("hi!")))
+    //     .map(Ok)
+    //     .throttle(Duration::from_secs(1));
+    let subscriber = match state.topic_db_map.get(&topic_name) {
+        Some(topic) => topic.topic_tree.watch_prefix(vec![]),
+        None => return (StatusCode::NOT_FOUND, Json(json!({}))),
+    };
+    Sse::new(subscriber).keep_alive(KeepAlive::default())
 }
-use axum::response::sse::{Event, KeepAlive, Sse}
 
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
