@@ -3,6 +3,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
+use futures::stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
@@ -214,6 +215,10 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
+        .route(
+            "/subscribe/{topic_name}/{consumer_id}",
+            get(subscribe_handler),
+        )
         .with_state(shared_state);
 
     // Run the server
@@ -233,6 +238,17 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 }
 
 async fn health() {}
+
+async fn subscribe_handler(
+    Path((topic_name, consumer_id)): Path<(String, String)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // A `Stream` that repeats an event every second
+    let stream = stream::repeat_with(|| Ok::<_, axum::Error>(Event::default().data("hi!")));
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+use axum::response::sse::{Event, KeepAlive, Sse}
 
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
