@@ -12,7 +12,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
-use tokio::time::sleep;
+use tokio::time::{Instant, sleep};
 use tracing::{Level, event, info, span};
 use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
@@ -664,6 +664,8 @@ pub struct TopicConfig {
 struct Message {
     id: u64,
     data: serde_json::Value,
+    // human readable timestamp?
+    // timestamp: String
 }
 
 #[derive(Debug)]
