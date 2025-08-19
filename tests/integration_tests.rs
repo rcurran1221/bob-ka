@@ -425,6 +425,7 @@ struct Message {
 struct Event<T> {
     id: u64,
     data: T,
+    timestamp: String,
 }
 
 #[derive(Serialize, Deserialize)]
