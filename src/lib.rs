@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
-use futures::stream;
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
@@ -12,7 +12,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
-use tokio::time::{Instant, sleep};
+use tokio::time::sleep;
 use tracing::{Level, event, info, span};
 use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
@@ -304,7 +304,7 @@ async fn ack_handler(
 async fn produce_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<serde_json::Value>,
+    Json(incoming_message): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let start = Instant::now();
     event!(Level::INFO, message = "got produce request", topic_name);
@@ -319,11 +319,17 @@ async fn produce_handler(
         }
     };
 
-    let payload_as_bytes = match to_vec(&payload) {
+    let timestamp = Local::now().format("%Y-%m-%d][%H:%M:%S");
+    let message = AtRestMessage {
+        data: incoming_message,
+        timestamp: timestamp.to_string(),
+    };
+
+    let message_as_bytes = match to_vec(&message) {
         Ok(p) => p,
         Err(e) => {
             println!(
-                "encountered error when converting payload to vec for topic: {topic_name}, error: {e}"
+                "encountered error when converting incoming message to vec for topic: {topic_name}, error: {e}"
             );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -345,7 +351,7 @@ async fn produce_handler(
 
     let resp = match topic_db
         .topic_tree
-        .insert(id.to_be_bytes(), payload_as_bytes)
+        .insert(id.to_be_bytes(), message_as_bytes)
     {
         Ok(_) => (StatusCode::OK, Json(json!({"messageId": id}))),
         Err(_) => (
@@ -554,7 +560,7 @@ async fn consume_handler(
         }
     };
 
-    let events: Vec<Message> = topic_db
+    let events: Vec<OutgoingMessage> = topic_db
         .topic_tree
         .range(next_msg..)
         .take(batch_size as usize)
@@ -584,9 +590,22 @@ async fn consume_handler(
                     }
                 };
 
-                Some(Message {
+                let message: AtRestMessage = match serde_json::from_str(&value) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        event!(
+                            Level::ERROR,
+                            message = "failed to parse value into message",
+                            error = e.to_string(),
+                        );
+                        return None;
+                    }
+                };
+
+                Some(OutgoingMessage {
                     id: key,
-                    data: serde_json::from_str(&value).unwrap_or_default(),
+                    data: message.data,
+                    timestamp: message.timestamp,
                 })
             }
             Err(_) => {
@@ -661,11 +680,16 @@ pub struct TopicConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct Message {
+struct OutgoingMessage {
     id: u64,
     data: serde_json::Value,
-    // human readable timestamp?
-    // timestamp: String
+    timestamp: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct AtRestMessage {
+    data: serde_json::Value,
+    timestamp: String,
 }
 
 #[derive(Debug)]
