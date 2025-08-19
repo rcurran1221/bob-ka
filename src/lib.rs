@@ -250,44 +250,48 @@ async fn subscribe_handler(
     // change design here a bit
     // dont use watch prefix, but rather just consume, send messages, consume
     // assuming client acks then consume call will continue to deliver new messages
+    // how to read from consumer state id to latest, and then start getting messages from watch prefix?
+    // this seems like a timing nightmare
     match state.topic_db_map.get(&topic_name) {
         Some(topic) => {
             let (tx, mut rx) = mpsc::channel(100);
 
             let stream = async_stream::stream! {
-                while let Some(item) = rx.recv().await {
+                while let some(item) = rx.recv().await {
                     yield item;
                 }
             };
 
-            let test = Sse::new(stream).keep_alive(KeepAlive::default());
-    //         let mut subscriber = topic.topic_tree.watch_prefix(vec![]);
-    //         tokio::task::spawn({
-    //             async move {
-    //                 loop {
-    //                     let event = (&mut subscriber).await;
-    //                     match event {
-    //                         Some(event) => match tx.send(event).await {
-    //                             Ok(_) => {}
-    //                             Err(_) => event!(
-    //                                 Level::ERROR,
-    //                                 message = "error on event send",
-    //                                 topic_name,
-    //                             ),
-    //                             // what to do now?
-    //                         },
-    //                         None => break,
-    //                     };
-    //                 }
-    //             }
-    //         });
-    //     }
-    //     None => {}
-    // }
-    let stream = stream::repeat_with(|| Ok::<_, sled::Error>(Event::default().data("hi!")))
-        .throttle(Duration::from_secs(1));
+            let test = sse::new(stream).keep_alive(keepalive::default());
+            let mut subscriber = topic.topic_tree.watch_prefix(vec![]);
+            //         tokio::task::spawn({
+            //             async move {
+            //                 loop {
+            //                     let event = (&mut subscriber).await;
+            //                     match event {
+            //                         Some(event) => match tx.send(event).await {
+            //                             Ok(_) => {}
+            //                             Err(_) => event!(
+            //                                 Level::ERROR,
+            //                                 message = "error on event send",
+            //                                 topic_name,
+            //                             ),
+            //                             // what to do now?
+            //                         },
+            //                         None => break,
+            //                     };
+            //                 }
+            //             }
+            //         });
+            //     }
+            //     None => {}
+            // }
+            let stream = stream::repeat_with(|| Ok::<_, sled::Error>(Event::default().data("hi!")))
+                .throttle(Duration::from_secs(1));
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+            Sse::new(stream).keep_alive(KeepAlive::default())
+        }
+    }
 }
 pub struct SimpleStream {
     receiver: mpsc::Receiver<Event>,
