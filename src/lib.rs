@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc::Sender;
 use tokio::time::sleep;
+use tower_http::services::ServeDir;
 use tracing::{Level, event, info, span};
 use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
@@ -215,6 +216,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
+        .nest_service("/static", ServeDir::new("./static"))
         .with_state(shared_state);
 
     // Run the server
