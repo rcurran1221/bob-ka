@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Notes Sender</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        label { margin-top: 15px; font-weight: bold; display:block; }
+        input[type="text"], textarea { width: 100%; margin-bottom: 10px; }
+        #topic { width: 60%; }
+        button { padding: 8px 16px; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <form id="noteForm">
+        <label for="notes">Notes:</label>
+        <textarea id="notes" name="notes" rows="4"></textarea>
+        
+        <label for="topic">Topic:</label>
+        <input type="text" id="topic" name="topic" size="20">
+        
+        <button type="submit">Send</button>
+    </form>
+    <script>
+        document.getElementById('noteForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const topic = document.getElementById('topic').value;
+            const notes = document.getElementById('notes').value;
+            const url = `http://127.0.0.1:8080/produce/${encodeURIComponent(topic)}`;
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ notes: notes })
+            });
+            // Optionally show a message to the user here
+        });
+    </script>
+</body>
+</html>
