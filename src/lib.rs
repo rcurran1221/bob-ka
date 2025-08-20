@@ -69,7 +69,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             Err(e) => panic!("unable to open db: {}, error: {}", topic.name.clone(), e),
         };
 
-        if topic_db_map.contains_key(&topic.name) {
+        if topic_db_map.contains_key(&topic.name.to_lowercase()) {
             panic!("topic name: {} declared twice", topic.name)
         }
 
@@ -170,7 +170,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
             event_sender: rx,
         };
 
-        topic_db_map.insert(topic.name.clone(), bob_topic);
+        topic_db_map.insert(topic.name.clone().to_lowercase(), bob_topic);
 
         event!(
             Level::INFO,
@@ -237,13 +237,60 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
+async fn last_n_handler(
+    Path((topic_name, n)): Path<(String, usize)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    event!(Level::INFO, message = "got topic stats request", topic_name);
+
+    let topic_db = match state.topic_db_map.get(&topic_name.to_lowercase()) {
+        Some(topic) => topic,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!("error: could not find topic: {topic_name}")),
+            );
+        }
+    };
+
+    let results = topic_db
+        .topic_tree
+        .iter()
+        .rev()
+        .take(n)
+        .filter_map(|e| match e {
+            Ok(e) => test(e, topic_name.clone()),
+            Err(e) => {
+                event!(
+                    Level::ERROR,
+                    message = "error reading message from topic db",
+                    error = e.to_string()
+                );
+                None
+            }
+        })
+        .collect::<Vec<OutgoingMessage>>();
+
+    // for event in topic_db.topic_tree.iter().rev().take(n) {
+    //     let event = match event {
+    //         Ok(event) => event,
+    //         Err(e) => {
+    //             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})))
+    //         }
+    //     }
+
+    // }
+
+    return (StatusCode::OK, Json(json!({})));
+}
+
 async fn topic_stats_handler(
     Path(topic_name): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     event!(Level::INFO, message = "got topic stats request", topic_name);
 
-    match state.topic_db_map.get(&topic_name) {
+    match state.topic_db_map.get(&topic_name.to_lowercase()) {
         Some(topic) => (
             StatusCode::OK,
             Json(json!({"topic_name": topic_name, "topic_length" : topic.topic_tree.len()})),
@@ -311,7 +358,7 @@ async fn produce_handler(
     let start = Instant::now();
     event!(Level::INFO, message = "got produce request", topic_name);
 
-    let topic_db = match state.topic_db_map.get(&topic_name) {
+    let topic_db = match state.topic_db_map.get(&topic_name.to_lowercase()) {
         Some(db) => db,
         None => {
             return (
@@ -524,7 +571,7 @@ async fn consume_handler(
         batch_size
     );
 
-    let topic_db = match state.topic_db_map.get(&topic_name) {
+    let topic_db = match state.topic_db_map.get(&topic_name.to_lowercase()) {
         Some(db) => db,
         None => {
             event!(Level::ERROR, message = "topic not found", topic_name);
@@ -649,6 +696,51 @@ async fn consume_handler(
     } else {
         (StatusCode::OK, Json(json!({ "events": events })))
     }
+}
+
+fn test(e: (IVec, IVec), topic_name: String) -> Option<OutgoingMessage> {
+    let key = match to_u64(e.0) {
+        Some(v) => v,
+        None => {
+            event!(
+                Level::ERROR,
+                message = "failed to convert vec into [u8; 8]",
+                topic_name
+            );
+            return None;
+        }
+    };
+
+    let value = match String::from_utf8(e.1.to_vec()) {
+        Ok(value) => value,
+        Err(_) => {
+            event!(
+                Level::ERROR,
+                message = "ivec to string from utf8 failed",
+                topic_name
+            );
+            return None;
+        }
+    };
+
+    let message: AtRestMessage = match serde_json::from_str(&value) {
+        Ok(m) => m,
+        Err(e) => {
+            event!(
+                Level::ERROR,
+                message = "failed to parse value into message",
+                error = e.to_string(),
+                json = value,
+            );
+            return None;
+        }
+    };
+
+    Some(OutgoingMessage {
+        id: key,
+        data: message.data,
+        timestamp: message.timestamp,
+    })
 }
 
 fn to_u64(input: IVec) -> Option<u64> {
