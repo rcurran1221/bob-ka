@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
-use chrono::Local;
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
@@ -321,10 +321,9 @@ async fn produce_handler(
         }
     };
 
-    let timestamp = Local::now().format("%Y-%m-%d][%H:%M:%S");
     let message = AtRestMessage {
         data: incoming_message,
-        timestamp: timestamp.to_string(),
+        timestamp: Local::now(),
     };
 
     let message_as_bytes = match to_vec(&message) {
@@ -599,6 +598,7 @@ async fn consume_handler(
                             Level::ERROR,
                             message = "failed to parse value into message",
                             error = e.to_string(),
+                            json = value,
                         );
                         return None;
                     }
@@ -685,13 +685,13 @@ pub struct TopicConfig {
 struct OutgoingMessage {
     id: u64,
     data: serde_json::Value,
-    timestamp: String,
+    timestamp: DateTime<Local>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct AtRestMessage {
     data: serde_json::Value,
-    timestamp: String,
+    timestamp: DateTime<Local>,
 }
 
 #[derive(Debug)]

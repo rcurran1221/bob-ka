@@ -27,7 +27,7 @@
             event.preventDefault();
             const topic = document.getElementById('topic').value;
             const notes = document.getElementById('notes').value;
-            const url = `http://127.0.0.1:8011/produce/${encodeURIComponent(topic)}`;
+            const url = `/produce/${encodeURIComponent(topic)}`;
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {
