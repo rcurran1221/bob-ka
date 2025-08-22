@@ -58,10 +58,6 @@
     function prettyData(data) {
       let data_string = JSON.stringify(data);
       data_string = data_string.replaceAll(/\\n/g, "<br>")
-      console.log(data_string);
-
-      // find all \n characters, terminate with a ", add <br>, open string again with "
-
       return data_string;
     }
 
