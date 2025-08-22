@@ -49,7 +49,7 @@
       const pageRows = rows.slice(current*perPage, (current+1)*perPage);
       pageRows.forEach(row => {
         tbody.innerHTML += '<tr>' +
-          columns.map(c => `<td>${JSON.stringify(row[c]) ?? ""}</td>`).join('') +
+          columns.map(c => `<pre><td>${JSON.stringify(row[c], undefined, 2) ?? ""}</td></pre>`).join('') +
         '</tr>';
       });
       document.getElementById('pageInfo').textContent = `Page ${current+1} of ${Math.max(1, Math.ceil(rows.length/perPage))}`;
