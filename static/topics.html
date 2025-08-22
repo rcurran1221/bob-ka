@@ -49,10 +49,20 @@
       const pageRows = rows.slice(current*perPage, (current+1)*perPage);
       pageRows.forEach(row => {
         tbody.innerHTML += '<tr>' +
-          columns.map(c => `<pre><td>${JSON.stringify(row[c], undefined, 2) ?? ""}</td></pre>`).join('') +
+          columns.map(c => `<td><pre>${prettyData(row[c]) ?? ""}</pre></td>`).join('') + // todo - make multiline json strings prettier 
         '</tr>';
       });
       document.getElementById('pageInfo').textContent = `Page ${current+1} of ${Math.max(1, Math.ceil(rows.length/perPage))}`;
+    }
+
+    function prettyData(data) {
+      let data_string = JSON.stringify(data);
+      data_string = data_string.replaceAll(/\\n/g, "<br>")
+      console.log(data_string);
+
+      // find all \n characters, terminate with a ", add <br>, open string again with "
+
+      return data_string;
     }
 
     document.getElementById('prevPage').onclick = () => {
