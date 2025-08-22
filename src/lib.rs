@@ -216,6 +216,8 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
+        .route("/peek/{topic_name}/{n_items}", get(peek_handler))
+        .route("/all_topics", get(all_topics))
         .nest_service("/static", ServeDir::new("./static"))
         .with_state(shared_state);
 
@@ -237,18 +239,30 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
 async fn health() {}
 
-async fn last_n_handler(
+async fn all_topics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    event!(Level::INFO, message = "got get all topic names request");
+
+    let topic_names: Vec<String> = state.topic_db_map.keys().map(|k| k.clone()).collect();
+
+    if topic_names.len() == 0 {
+        (StatusCode::NO_CONTENT, Json(json!({})))
+    } else {
+        (StatusCode::OK, Json(json!({"topic_names": topic_names})))
+    }
+}
+
+async fn peek_handler(
     Path((topic_name, n)): Path<(String, usize)>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    event!(Level::INFO, message = "got topic stats request", topic_name);
+    event!(Level::INFO, message = "got peek request", topic_name);
 
     let topic_db = match state.topic_db_map.get(&topic_name.to_lowercase()) {
         Some(topic) => topic,
         None => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!("error: could not find topic: {topic_name}")),
+                Json(json!({"error": "could not find topic: {topic_name}"})),
             );
         }
     };
@@ -271,17 +285,13 @@ async fn last_n_handler(
         })
         .collect::<Vec<OutgoingMessage>>();
 
-    // for event in topic_db.topic_tree.iter().rev().take(n) {
-    //     let event = match event {
-    //         Ok(event) => event,
-    //         Err(e) => {
-    //             return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({})))
-    //         }
-    //     }
+    event!(Level::INFO, message = "responding to peek request");
 
-    // }
-
-    return (StatusCode::OK, Json(json!({})));
+    if results.len() == 0 {
+        (StatusCode::NO_CONTENT, Json(json!({ "events": [] })))
+    } else {
+        (StatusCode::OK, Json(json!({ "events": results})))
+    }
 }
 
 async fn topic_stats_handler(

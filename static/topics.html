@@ -34,7 +34,7 @@
 
   <script>
     let rows = [];
-    let current = 0, perPage = 5, columns = [];
+    let current = 0, perPage = 50, columns = [];
 
     function renderTable() {
       const thead = document.querySelector('#dataGrid thead');
@@ -63,15 +63,16 @@
     };
     document.getElementById('sendBtn').onclick = async () => {
       const topic = document.getElementById('topic').value;
-      const url = `/consume/${encodeURIComponent(topic)}/robc/5`;
+      const url = `/peek/${encodeURIComponent(topic)}/100`;
       try {
         const resp = await fetch(url);
         if (!resp.ok) throw new Error("Failed to fetch");
+        console.log(resp);
         const data = await resp.json();
         // Expecting 'data' to be an array of objects
         if (Array.isArray(data.events) && data.events.length > 0 && typeof data.events[0] === 'object') {
           rows = data.events;
-          columns = Object.keys(data.events[0]);
+          columns = ["data", "timestamp"];
         } else if (typeof data === 'object') {
           rows = [data];
           columns = Object.keys(data);
