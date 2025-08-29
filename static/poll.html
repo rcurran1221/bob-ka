@@ -274,7 +274,7 @@
     <script>
         class DataPoller {
             constructor() {
-                this.apiEndpoint = 'https://jsonplaceholder.typicode.com/users'; // Demo endpoint
+                this.apiEndpoint = 'http://localhost:8011/consume/dashboard/dashboard-1/1'; // Demo endpoint
                 this.pollingInterval = 5000; // 5 seconds
                 this.intervalId = null;
                 this.isPolling = false;
@@ -322,10 +322,11 @@
                     }
                     
                     const data = await response.json();
+                    console.log(data);
                     
-                    if (Array.isArray(data) && data.length > 0) {
-                        this.renderTable(data);
-                        this.updateStatus('connected', `Loaded ${data.length} items`);
+                    if (Array.isArray(data.events) && data.events.length > 0) {
+                        this.renderTable(data.events);
+                        this.updateStatus('connected', `Loaded ${data.events.length} items`);
                         this.updateLastUpdateTime();
                     } else {
                         this.renderEmptyState();

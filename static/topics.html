@@ -49,17 +49,44 @@
       const pageRows = rows.slice(current*perPage, (current+1)*perPage);
       pageRows.forEach(row => {
         tbody.innerHTML += '<tr>' +
-          columns.map(c => `<td><pre>${prettyData(row[c]) ?? ""}</pre></td>`).join('') + // todo - make multiline json strings prettier 
+          columns.map(c => `<td>${prettyData(row[c]) ?? ""}</td>`).join('') + // todo - make multiline json strings prettier 
         '</tr>';
       });
       document.getElementById('pageInfo').textContent = `Page ${current+1} of ${Math.max(1, Math.ceil(rows.length/perPage))}`;
     }
 
-    function prettyData(data) {
-      let data_string = JSON.stringify(data);
-      data_string = data_string.replaceAll(/\\n/g, "<br>")
-      return data_string;
+    <!-- function prettyData(data) { -->
+      <!-- let data_string = JSON.stringify(data); -->
+      <!-- data_string = data_string.replaceAll(/\\n/g, "<br>") -->
+      <!-- return data_string; -->
+    <!-- } -->
+
+  function prettyData(data) {
+    if (typeof data !== 'string') {
+      data = JSON.stringify(data, null, 2); // Pretty-print JSON
     }
+
+    // Escape HTML to prevent injection
+    data = data.replaceAll(/[&<>"']/g, function (match) {
+      return ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[match];
+    });
+
+    // Convert triple backtick code blocks to <pre><code> blocks
+    data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
+      return `<pre><code class="language-${lang}">${code}</code></pre>`;
+    });
+
+    // Replace newlines with <br> (outside code blocks)
+    data = data.replaceAll(/\\n/g, '<br>');
+
+    return data;
+  }
 
     document.getElementById('prevPage').onclick = () => {
       if (current > 0) { current--; renderTable(); }
