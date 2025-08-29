@@ -1,6 +1,7 @@
-/target
-/consumer_state/
-/consumer-state/
-/test-topic*/
-/test_topic*/
-/logs/
+dashboard/
+test-*/
+llm/
+llm-reply/
+target/
+logs/
+reminder*/
