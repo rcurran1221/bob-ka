@@ -67,22 +67,22 @@
     }
 
     // Escape HTML to prevent injection
-    data = data.replaceAll(/[&<>"']/g, function (match) {
-      return ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-      })[match];
-    });
+    <!-- data = data.replaceAll(/[&<>"']/g, function (match) { -->
+      <!-- return ({ -->
+        <!-- '&': '&amp;', -->
+        <!-- '<': '&lt;', -->
+        <!-- '>': '&gt;', -->
+        <!-- '"': '&quot;', -->
+        <!-- "'": '&#39;', -->
+      <!-- })[match]; -->
+    <!-- }); -->
 
-    // Convert triple backtick code blocks to <pre><code> blocks
+    <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
     data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
       return `<pre><code class="language-${lang}">${code}</code></pre>`;
     });
 
-    // Replace newlines with <br> (outside code blocks)
+    <!-- // Replace newlines with <br> (outside code blocks) -->
     data = data.replaceAll(/\\n/g, '<br>');
 
     return data;
