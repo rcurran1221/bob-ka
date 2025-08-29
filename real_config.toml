@@ -1,0 +1,27 @@
+title = "boblog config"
+
+temp_consumer_state = false
+
+[web_config]
+port = 8011
+
+[[topics]]
+name = "llm"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "llm-reply"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "reminder-test"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "dashboard"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
