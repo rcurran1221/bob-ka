@@ -80,36 +80,39 @@
   <a href="/static/poll.html">Go to Poll Page</a>
 
   <script>
-    document.getElementById('noteForm').addEventListener('submit', async function(event) {
-      event.preventDefault();
-      const topic = document.getElementById('topic').value.trim();
-      const notes = document.getElementById('notes').value.trim();
+   document.getElementById('noteForm').addEventListener('submit', async function(event) {
+event.preventDefault();
+const topic = document.getElementById('topic').value.trim();
+const notes = document.getElementById('notes').value.trim();
 
-      if (!topic || !notes) return; // basic prevent empty
+if (!topic || !notes) return; // basic prevent empty
 
-      const url = `/produce/${encodeURIComponent(topic)}`;
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(notes)
-        });
+const url = `/produce/${encodeURIComponent(topic)}`;
+try {
+const response = await fetch(url, {
+method: 'POST',
+headers: {
+'Content-Type': 'application/json'
+},
+body: JSON.stringify(notes)
+});
 
-        if (response.ok) {
-          // Clear notes box on send
-          document.getElementById('notes').value = "";
-          // Show success message
-          const msg = document.getElementById('message');
-          msg.style.display = "block";
-          setTimeout(() => { msg.style.display = "none"; }, 3000);
-        }
-      } catch (error) {
-        console.error("Error sending notes:", error);
-      }
-    });
-  </script>
+if (response.ok) {
+// Clear notes box on send
+document.getElementById('notes').value = "";
+// Show success message
+const msg = document.getElementById('message');
+msg.style.display = "block";
+setTimeout(() => {
+msg.style.display = "none";
+document.getElementById('topic').focus(); // Focus topic input
+}, 3000);
+}
+} catch (error) {
+console.error("Error sending notes:", error);
+}
+});
+ </script>
 </body>
 </html>
 
