@@ -21,6 +21,11 @@ compression = true
 temporary = false
 backoff_dialation_ms = 1000
 [[topics]]
+name = "log"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
 name = "dashboard"
 compression = true
 temporary = false
