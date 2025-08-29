@@ -1,0 +1,54 @@
+title = "boblog config"
+
+temp_consumer_state = false
+
+[web_config]
+port = 8011
+
+[[topics]]
+name = "test"
+compression = true
+temporary = false
+[[topics]]
+name = "rob"
+compression = true
+temporary = false
+[[topics]]
+name = "noah"
+compression = true
+temporary = false
+[[topics]]
+name = "sloan"
+compression = true
+temporary = false
+[[topics]]
+name = "katie"
+compression = true
+temporary = false
+[[topics]]
+name = "chores"
+compression = true
+temporary = false
+[[topics]]
+name = "llm"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "reminder-test"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "dashboard"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "llm-reply"
+compression = true
+temporary = false
+[[topics]]
+name = "random"
+compression = true
+temporary = false
