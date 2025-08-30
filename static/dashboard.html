@@ -5,82 +5,139 @@
   <meta charset="UTF-8">
   <title>Notes Sender</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Responsive meta -->
-  <style> </style>
+  <style>
+    table,
+    th,
+    td {
+      border: 1px solid black;
+      border-collapse: collapse;
+      white-space: pre-wrap;
+    }
+
+    table {
+      table-layout: fixed;
+      width: 600px;
+    }
+  </style>
 </head>
 
 <body>
   <div style="display: flex;flex-direction: column;">
     <div>
       <h2> Upcoming </h2>
-      <p id="upcoming_latest" , style="white-space: pre-wrap;"> </p>
+      <table>
+        <tr>
+          <td>
+            <p id="upcoming_latest" , style="white-space: pre-wrap;"> </p>
+          </td>
+        </tr>
+      </table>
     </div>
     <div>
       <h2> Log </h2>
       <div id="log_table">
       </div>
-    </div>
+      <div>
+        <h2> Llm Replies</h2>
+        <div id="llm_table">
+        </div>
+      </div>
 
-    <script>
+      <script>
 
-      function createTable(data) {
-        let table = '<table border="1"><tr><th>Column Name</th></tr>';
+        function createTable(data, id) {
+          let table = '<table>';
 
-        data.forEach(item => {
-          table += `<tr><td>${item.columnName}</td></tr>`;
-        });
+          data.forEach(item => {
+            table += `<tr><td>${prettyData(item.data)}</td></tr>`;
+          });
 
-        table += '</table>';
-        document.getElementById('log_table').innerHTML = table;
-      }
-
-      function prettyData(data) {
-        if (typeof data !== 'string') {
-          data = JSON.stringify(data, null, 2); // Pretty-print JSON
+          table += '</table>';
+          document.getElementById(id).innerHTML = table;
         }
 
-        // Escape HTML to prevent injection
-        data = data.replaceAll(/[&<>"']/g, function (match) {
-          return ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;',
-          })[match];
-        });
-
-        <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
-        data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
-          return `<pre><code class="language-${lang}">${code}</code></pre>`;
-        });
-
-        data = data.replaceAll(/\n/g, '<br>');
-
-        return data;
-      }
-      const url = `/peek/dashboard/1`;
-      try {
-        const response = fetch(url, {
-          method: 'GET',
-        }).then(response => {
-          if (response.ok) {
-            // Clear notes box on send
-            console.log(response);
-            response.json().then(data => {
-
-              console.log(data);
-              let element = document.getElementById('upcoming_latest')
-              console.log(data.events[0].data);
-              console.log(prettyData(data.events[0].data));
-              element.textContent = data.events[0].data;
-            })
+        function prettyData(data) {
+          if (typeof data !== 'string') {
+            data = JSON.stringify(data, null, 2); // Pretty-print JSON
           }
-        });
 
-      } catch (error) {
-        console.error("Error getting upcoming data", error);
-      }
-    </script>
+          // Escape HTML to prevent injection
+          data = data.replaceAll(/[&<>"']/g, function (match) {
+            return ({
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#39;',
+            })[match];
+          });
+
+          <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
+          data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
+            return `<pre><code class="language-${lang}">${code}</code></pre>`;
+          });
+
+          data = data.replaceAll(/\n/g, '<br>');
+
+          return data;
+        }
+        const url = `/peek/dashboard/1`;
+        try {
+          const response = fetch(url, {
+            method: 'GET',
+          }).then(response => {
+            if (response.ok) {
+              // Clear notes box on send
+              console.log(response);
+              response.json().then(data => {
+
+                console.log(data);
+                let element = document.getElementById('upcoming_latest')
+                console.log(data.events[0].data);
+                console.log(prettyData(data.events[0].data));
+                element.textContent = data.events[0].data;
+              })
+            }
+          });
+
+        } catch (error) {
+          console.error("Error getting upcoming data", error);
+        }
+        try {
+          const response = fetch('/peek/log/30', {
+            method: 'GET',
+          }).then(response => {
+            if (response.ok) {
+              // Clear notes box on send
+              console.log(response);
+              response.json().then(data => {
+                console.log(data);
+                createTable(data.events, "log_table");
+              })
+            }
+          });
+
+        } catch (error) {
+          console.error("Error getting upcoming data", error);
+        }
+        try {
+          const response = fetch('/peek/llm-reply/30', {
+            method: 'GET',
+          }).then(response => {
+            if (response.ok) {
+              // Clear notes box on send
+              console.log(response);
+              response.json().then(data => {
+                console.log(data);
+                createTable(data.events, "llm_table");
+              })
+            }
+          });
+
+        } catch (error) {
+          console.error("Error getting upcoming data", error);
+        }
+      </script>
 </body>
 
 </html>
