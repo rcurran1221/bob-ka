@@ -30,3 +30,4 @@ name = "dashboard"
 compression = true
 temporary = false
 backoff_dialation_ms = 1000
+cap = 10
