@@ -1,17 +1,42 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <title>Topics Grid</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 40px; }
-    .grid-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-    .grid-table th, .grid-table td { border: 1px solid #ccc; padding: 8px; }
-    .grid-table th { background: #f5f5f5; }
-    #paging { margin-top: 10px; }
-    #topic, #sendBtn { vertical-align: middle; }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+    }
+
+    .grid-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    .grid-table th,
+    .grid-table td {
+      border: 1px solid #ccc;
+      padding: 8px;
+    }
+
+    .grid-table th {
+      background: #f5f5f5;
+    }
+
+    #paging {
+      margin-top: 10px;
+    }
+
+    #topic,
+    #sendBtn {
+      vertical-align: middle;
+    }
   </style>
 </head>
+
 <body>
   <label for="topic">Topic:</label>
   <input type="text" id="topic" name="topic" size="20">
@@ -46,53 +71,44 @@
       }
       // Rows for this page
       tbody.innerHTML = '';
-      const pageRows = rows.slice(current*perPage, (current+1)*perPage);
+      const pageRows = rows.slice(current * perPage, (current + 1) * perPage);
       pageRows.forEach(row => {
         tbody.innerHTML += '<tr>' +
-          columns.map(c => `<td>${prettyData(row[c]) ?? ""}</td>`).join('') + // todo - make multiline json strings prettier 
-        '</tr>';
+          columns.map(c => `<td style="white-space: pre-wrap;">${prettyData(row[c] ?? "")}</td>`).join('') + // todo - make multiline json strings prettier 
+          '</tr>';
       });
-      document.getElementById('pageInfo').textContent = `Page ${current+1} of ${Math.max(1, Math.ceil(rows.length/perPage))}`;
+      document.getElementById('pageInfo').textContent = `Page ${current + 1} of ${Math.max(1, Math.ceil(rows.length / perPage))}`;
     }
+    function prettyData(data) {
+      if (typeof data !== 'string') {
+        data = JSON.stringify(data, null, 2); // Pretty-print JSON
+      }
 
-    <!-- function prettyData(data) { -->
-      <!-- let data_string = JSON.stringify(data); -->
-      <!-- data_string = data_string.replaceAll(/\\n/g, "<br>") -->
-      <!-- return data_string; -->
-    <!-- } -->
+      // Escape HTML to prevent injection
+      data = data.replaceAll(/[&<>"']/g, function (match) {
+        return ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        })[match];
+      });
 
-  function prettyData(data) {
-    if (typeof data !== 'string') {
-      data = JSON.stringify(data, null, 2); // Pretty-print JSON
+      <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
+      data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
+        return `<pre><code class="language-${lang}">${code}</code></pre>`;
+      });
+
+      data = data.replaceAll(/\n/g, '<br>');
+
+      return data;
     }
-
-    // Escape HTML to prevent injection
-    data = data.replaceAll(/[&<>"']/g, function (match) {
-      return ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-      })[match];
-    });
-
-    <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
-    data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
-      return `<pre><code class="language-${lang}">${code}</code></pre>`;
-    });
-
-    <!-- // Replace newlines with <br> (outside code blocks) -->
-    data = data.replaceAll(/\\n/g, '<br>');
-
-    return data;
-  }
-
     document.getElementById('prevPage').onclick = () => {
-      if (current > 0) { current--; renderTable(); }
+      if (current > 0) {current--; renderTable();}
     };
     document.getElementById('nextPage').onclick = () => {
-      if ((current+1)*perPage < rows.length) { current++; renderTable(); }
+      if ((current + 1) * perPage < rows.length) {current++; renderTable();}
     };
     document.getElementById('sendBtn').onclick = async () => {
       const topic = document.getElementById('topic').value;
@@ -124,4 +140,5 @@
     renderTable();
   </script>
 </body>
+
 </html>

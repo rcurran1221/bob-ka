@@ -5,122 +5,82 @@
   <meta charset="UTF-8">
   <title>Notes Sender</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Responsive meta -->
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-      padding: 0;
-      background: #f9f9f9;
-    }
-
-    form {
-      max-width: 600px;
-      margin: auto;
-      background: white;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-    }
-
-    label {
-      margin-top: 15px;
-      font-weight: bold;
-      display: block;
-    }
-
-    input[type="text"],
-    textarea {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      margin-top: 5px;
-      margin-bottom: 15px;
-      font-size: 16px;
-    }
-
-    button {
-      padding: 12px 20px;
-      font-size: 16px;
-      width: 100%;
-      border: none;
-      border-radius: 6px;
-      background-color: #0077cc;
-      color: white;
-      cursor: pointer;
-    }
-
-    button:hover {
-      background-color: #005fa3;
-    }
-
-    #message {
-      margin-top: 15px;
-      font-size: 14px;
-      color: green;
-      display: none;
-    }
-
-    a {
-      display: block;
-      text-align: center;
-      margin-top: 20px;
-      color: #0077cc;
-      text-decoration: none;
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
-  </style>
+  <style> </style>
 </head>
 
 <body>
-  <form id="noteForm">
-    <label for="topic">Topic:</label>
-    <input type="text" id="topic" name="topic" size="20" required>
+  <div style="display: flex;flex-direction: column;">
+    <div>
+      <h2> Upcoming </h2>
+      <p id="upcoming_latest" , style="white-space: pre-wrap;"> </p>
+    </div>
+    <div>
+      <h2> Log </h2>
+      <div id="log_table">
+      </div>
+    </div>
 
-    <label for="notes">Notes:</label>
-    <textarea id="notes" name="notes" rows="4" required></textarea>
+    <script>
 
-    <button type="submit">Send</button>
-    <div id="message">✅ Notes sent successfully!</div>
-  </form>
+      function createTable(data) {
+        let table = '<table border="1"><tr><th>Column Name</th></tr>';
 
-  <a href="/static/topics.html">Go to Topics Page</a>
-  <a href="/static/poll.html">Go to Poll Page</a>
-
-  <script>
-    document.getElementById('noteForm').addEventListener('submit', async function (event) {
-      event.preventDefault();
-      const topic = document.getElementById('topic').value.trim();
-      const notes = document.getElementById('notes').value.trim();
-
-      if (!topic || !notes) return; // basic prevent empty
-
-      const url = `/produce/${encodeURIComponent(topic)}`;
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(notes)
+        data.forEach(item => {
+          table += `<tr><td>${item.columnName}</td></tr>`;
         });
 
-        if (response.ok) {
-          // Clear notes box on send
-          document.getElementById('notes').value = "";
-          // Show success message
-          const msg = document.getElementById('message');
-          msg.style.display = "none";
-          document.getElementById('topic').focus(); // Focus topic input
-        }
-      } catch (error) {
-        console.error("Error sending notes:", error);
+        table += '</table>';
+        document.getElementById('log_table').innerHTML = table;
       }
-    });
-  </script>
+
+      function prettyData(data) {
+        if (typeof data !== 'string') {
+          data = JSON.stringify(data, null, 2); // Pretty-print JSON
+        }
+
+        // Escape HTML to prevent injection
+        data = data.replaceAll(/[&<>"']/g, function (match) {
+          return ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+          })[match];
+        });
+
+        <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
+        data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
+          return `<pre><code class="language-${lang}">${code}</code></pre>`;
+        });
+
+        data = data.replaceAll(/\n/g, '<br>');
+
+        return data;
+      }
+      const url = `/peek/dashboard/1`;
+      try {
+        const response = fetch(url, {
+          method: 'GET',
+        }).then(response => {
+          if (response.ok) {
+            // Clear notes box on send
+            console.log(response);
+            response.json().then(data => {
+
+              console.log(data);
+              let element = document.getElementById('upcoming_latest')
+              console.log(data.events[0].data);
+              console.log(prettyData(data.events[0].data));
+              element.textContent = data.events[0].data;
+            })
+          }
+        });
+
+      } catch (error) {
+        console.error("Error getting upcoming data", error);
+      }
+    </script>
 </body>
 
 </html>
