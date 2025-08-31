@@ -12,6 +12,25 @@ cap = 100
 cap_tolerance = 10
 temporary = false
 [[topics]]
+name = "reminder-test"
+compression = true
+cap = 10000
+cap_tolerance = 10
+temporary = false
+backoff_dialation_ms = 1000
+[[topics]]
+name = "dashboard"
+compression = true
+cap = 10000
+cap_tolerance = 10
+temporary = false
+[[topics]]
+name = "reminder"
+compression = true
+cap = 100
+cap_tolerance = 10
+temporary = false
+[[topics]]
 name = "test-topic-stress"
 compression = true
 cap = 100
@@ -35,11 +54,3 @@ name = "test-topic-time-retention"
 compression = true
 time_based_retention = 1 # minute
 temporary = false
-
-[[nodes]]
-name = "test-node-0"
-topics = ["topic-0", "topic-1"]
-
-[[nodes]]
-name = "test-node-1"
-topics = ["topic-2", "topic-3"]

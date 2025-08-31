@@ -43,8 +43,12 @@
     </div>
     <div>
       <h2> Todo </h2>
-      <div id="todo_table">
-      </div>
+      <table id="todo_table">
+        <tr>
+          <td>go to school and get good grades</td>
+          <td contenteditable="true" class="todo-resolution" id="todo-x">col 2</td>
+        <tr>
+      </table>
       <div>
         <h2> Log </h2>
         <div id="log_table">
@@ -93,6 +97,40 @@
 
             return data;
           }
+          const resolutions = document.getElementsByClassName('todo-resolution');
+          console.log(resolutions);
+          for (const r of resolutions) {
+            console.log(r);
+          }
+
+          const todoTable = document.getElementById('todo_table'); // Or a parent container
+          todoTable.addEventListener('keydown', async event => {
+            if (event.key === 'Enter') {
+              console.log(event.target);
+
+              if (event.target.className == 'todo-resolution') {
+                console.log('in table cell');
+                const eventData = "delete." + event.target.id;
+
+                const response = await fetch('/produce/reminder-test', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json'
+                  },
+                  body: eventData,
+                })
+
+                console.log(response);
+
+                if (response.status == 200) {
+                  event.target.innerText = ""
+                } else {
+                  alert("produce delete todo event failed: " + response.status)
+                }
+              }
+            }
+          });
+
           // todo will be something like this?
           const url = `/peek/dashboard/1`;
           try {
