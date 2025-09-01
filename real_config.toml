@@ -31,3 +31,15 @@ compression = true
 temporary = false
 backoff_dialation_ms = 1000
 cap = 10
+[[topics]]
+name = "todo-state"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+cap = 10
+[[topics]]
+name = "todo-event"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+cap = 100

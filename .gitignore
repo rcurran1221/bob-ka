@@ -7,3 +7,5 @@ logs/
 log/
 reminder*/
 consumer*/
+todo-event/
+todo-state/

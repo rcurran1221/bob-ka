@@ -43,12 +43,12 @@
     </div>
     <div>
       <h2> Todo </h2>
-      <table id="todo_table">
+      <div id="todo_table">
         <tr>
           <td>go to school and get good grades</td>
           <td contenteditable="true" class="todo-resolution" id="todo-x">col 2</td>
         <tr>
-      </table>
+      </div>
       <div>
         <h2> Log </h2>
         <div id="log_table">
@@ -70,6 +70,19 @@
 
             table += '</table>';
             document.getElementById(id).innerHTML = table;
+          }
+
+          function createTodoTable(todos) {
+            let table = '<table>';
+
+            console.log(todos);
+            todos.forEach(item => {
+              table += `<tr><td id="${item.id}">${item.description}</td><td contenteditable="true" class="todo-resolution" id="${item.id}"></td></tr>`;
+            });
+
+            table += '</table>';
+            document.getElementById("todo_table").innerHTML = table;
+
           }
 
           function prettyData(data) {
@@ -97,30 +110,20 @@
 
             return data;
           }
-          const resolutions = document.getElementsByClassName('todo-resolution');
-          console.log(resolutions);
-          for (const r of resolutions) {
-            console.log(r);
-          }
-
           const todoTable = document.getElementById('todo_table'); // Or a parent container
           todoTable.addEventListener('keydown', async event => {
             if (event.key === 'Enter') {
-              console.log(event.target);
 
               if (event.target.className == 'todo-resolution') {
-                console.log('in table cell');
                 const eventData = "delete." + event.target.id;
 
-                const response = await fetch('/produce/reminder-test', {
+                const response = await fetch('/produce/todo-event', {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json'
                   },
                   body: JSON.stringify(eventData),
                 })
-
-                console.log(response);
 
                 if (response.status == 200) {
                   event.target.innerText = ""
@@ -139,14 +142,24 @@
             }).then(response => {
               if (response.ok) {
                 // Clear notes box on send
-                console.log(response);
                 response.json().then(data => {
-
-                  console.log(data);
                   let element = document.getElementById('upcoming_latest')
-                  console.log(data.events[0].data);
-                  console.log(prettyData(data.events[0].data));
                   element.textContent = data.events[0].data;
+                })
+              }
+            });
+
+          } catch (error) {
+            console.error("Error getting upcoming data", error);
+          }
+          const todoUrl = `/peek/todo-state/1`;
+          try {
+            const response = fetch(todoUrl, {
+              method: 'GET',
+            }).then(response => {
+              if (response.ok) {
+                response.json().then(data => {
+                  createTodoTable(data.events[0].data.todos, "todo_table");
                 })
               }
             });
@@ -159,10 +172,7 @@
               method: 'GET',
             }).then(response => {
               if (response.ok) {
-                // Clear notes box on send
-                console.log(response);
                 response.json().then(data => {
-                  console.log(data);
                   createTable(data.events, "log_table");
                 })
               }
@@ -176,10 +186,7 @@
               method: 'GET',
             }).then(response => {
               if (response.ok) {
-                // Clear notes box on send
-                console.log(response);
                 response.json().then(data => {
-                  console.log(data);
                   createTable(data.events, "llm_table");
                 })
               }
