@@ -61,7 +61,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
 
         let sled_config = Config::new()
             .use_compression(topic.compression)
-            .path(topic.name.clone())
+            .path(format!("{}/{}", "dbs", topic.name.clone()))
             .temporary(topic.temporary);
 
         let db: Db = match sled_config.open() {
@@ -184,7 +184,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     event!(Level::INFO, "opening consumer state db");
 
     let consumer_state_config = Config::new()
-        .path("consumer_state")
+        .path(format!("{}/{}", "dbs", "consumer_state"))
         .temporary(config.temp_consumer_state);
 
     let consumer_state_db: Db = match consumer_state_config.open() {
