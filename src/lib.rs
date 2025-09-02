@@ -19,7 +19,7 @@ use tracing_appender::rolling;
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-pub async fn start_web_server(config: BobConfig, dbs_path: String) -> Result<(), Box<dyn Error>> {
+pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
     let file_appender = rolling::daily("logs", "bob_ka.log");
 
     let stdout_layer = fmt::layer().with_target(false).with_level(true);
@@ -61,7 +61,7 @@ pub async fn start_web_server(config: BobConfig, dbs_path: String) -> Result<(),
 
         let sled_config = Config::new()
             .use_compression(topic.compression)
-            .path(format!("{}/{}", dbs_path.clone(), topic.name.clone()))
+            .path(topic.name.clone())
             .temporary(topic.temporary);
 
         let db: Db = match sled_config.open() {
@@ -184,7 +184,7 @@ pub async fn start_web_server(config: BobConfig, dbs_path: String) -> Result<(),
     event!(Level::INFO, "opening consumer state db");
 
     let consumer_state_config = Config::new()
-        .path(format!("{}/{}", dbs_path.clone(), "consumer_state"))
+        .path("consumer_state")
         .temporary(config.temp_consumer_state);
 
     let consumer_state_db: Db = match consumer_state_config.open() {
