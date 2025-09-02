@@ -7,6 +7,7 @@ use toml::de::from_str;
 async fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     let config_location = &args[1];
+    let dbs_location = &args[2];
     println!("reading config from: {config_location}");
     let config: BobConfig = match fs::read_to_string(config_location) {
         Ok(content) => from_str(&content).expect("unable to parse config into struct"),
