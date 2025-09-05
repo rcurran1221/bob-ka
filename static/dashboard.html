@@ -34,14 +34,8 @@
   <div style="display: flex;flex-direction: column;">
     <div>
       <h2> Upcoming </h2>
-      <table>
-        <tr>
-          <td id="upcoming_latest" , style="white-space: pre-wrap;">
-          </td>
-        </tr>
-      </table>
-    </div>
-    <div>
+      <div id="reminder_table">
+      </div>
       <h2> Todo </h2>
       <div id="todo_table">
       </div>
@@ -78,6 +72,19 @@
 
             table += '</table>';
             document.getElementById("todo_table").innerHTML = table;
+
+          }
+
+          function createReminderTable(reminders) {
+            let table = '<table>';
+
+            console.log(reminders);
+            reminders.forEach(item => {
+              table += `<tr><td id="${item.id}">${item.description}</td><td id="${item.id}>${item.date_time}</td></tr>`;
+            });
+
+            table += '</table>';
+            document.getElementById("reminder_table").innerHTML = table;
 
           }
 
@@ -139,8 +146,11 @@
               if (response.ok) {
                 // Clear notes box on send
                 response.json().then(data => {
-                  let element = document.getElementById('upcoming_latest')
-                  element.textContent = data.events[0].data;
+                  let element = document.getElementById('reminder_table')
+                  let reminders = data.events[0].data.reminders;
+                  console.log(data);
+                  createReminderTable(reminders);
+
                 })
               }
             });

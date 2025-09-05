@@ -242,9 +242,9 @@ async fn health() {}
 async fn all_topics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     event!(Level::INFO, message = "got get all topic names request");
 
-    let topic_names: Vec<String> = state.topic_db_map.keys().map(|k| k.clone()).collect();
+    let topic_names: Vec<String> = state.topic_db_map.keys().cloned().collect();
 
-    if topic_names.len() == 0 {
+    if topic_names.is_empty() {
         (StatusCode::NO_CONTENT, Json(json!({})))
     } else {
         (StatusCode::OK, Json(json!({"topic_names": topic_names})))
@@ -287,7 +287,7 @@ async fn peek_handler(
 
     event!(Level::INFO, message = "responding to peek request");
 
-    if results.len() == 0 {
+    if results.is_empty() {
         (StatusCode::NO_CONTENT, Json(json!({ "events": [] })))
     } else {
         (StatusCode::OK, Json(json!({ "events": results})))
