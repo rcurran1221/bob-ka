@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -27,10 +27,21 @@
     pre {
       max-width: 100%;
     }
+
+    .primary_column {
+      width: 80%;
+    }
+
+    .secondary_column {
+      width: 20%;
+    }
+
+    _
   </style>
 </head>
 
 <body>
+  <a href="/static/index.html">Go to Index</a>
   <div style="display: flex;flex-direction: column;">
     <div>
       <h2> Upcoming </h2>
@@ -55,7 +66,10 @@
             let table = '<table>';
 
             data.forEach(item => {
-              table += `<tr><td>${prettyData(item.data)}</td></tr>`;
+              // make this display timestamp in a small column on the right hand side?
+              // this is OK - maybe just need to format it how you want
+              table += (`<tr><td class="primary_column">${prettyData(item.data)}</td>` +
+                `<td class="secondary_column">${prettyDateTime(item.timestamp)}</td></tr>`);
             });
 
             table += '</table>';
@@ -67,7 +81,8 @@
 
             console.log(todos);
             todos.forEach(item => {
-              table += `<tr><td id="${item.id}">${item.description}</td><td contenteditable="true" class="todo-resolution" id="${item.id}"></td></tr>`;
+              table += `<tr><td class="primary_column" id="${item.id}">${item.description}</td>` +
+                `<td contenteditable="true" class="secondary_column todo-resolution" id="${item.id}"></td></tr>`;
             });
 
             table += '</table>';
@@ -80,11 +95,38 @@
 
             console.log(reminders);
             reminders.forEach(item => {
-              table += `<tr><td id="${item.id}">${item.description}</td><td id="${item.id}>${item.date_time}</td></tr>`;
+              // go from utc to local here for date_time field
+              table += `<tr><td class="secondary_column id="${item.id}">${prettyDateTime(item.date_time)}</td><td class="primary_column">${item.description}</td></tr>`;
             });
 
             table += '</table>';
             document.getElementById("reminder_table").innerHTML = table;
+
+          }
+
+          function prettyDateTime(isoDateString) {
+
+            console.log(isoDateString);
+            // Create a Date object from the ISO string
+            const date = new Date(isoDateString);
+
+            console.log(date);
+
+            // Format the date to a pretty string in local time
+            const options = {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              timeZoneName: 'short'
+            };
+
+            const formattedDate = date.toLocaleString(undefined, options);
+
+            console.log(formattedDate);
+
+            return formattedDate
 
           }
 
@@ -117,7 +159,7 @@
           todoTable.addEventListener('keydown', async event => {
             if (event.key === 'Enter') {
 
-              if (event.target.className == 'todo-resolution') {
+              if (event.target.className.includes('todo-resolution')) {
                 const eventData = "delete." + event.target.id;
 
                 const response = await fetch('/produce/todo-event', {
