@@ -66,37 +66,6 @@
 
 
           <script>
-            if ('serviceWorker' in navigator) {
-              console.log("main js register service worker")
-              navigator.serviceWorker.register('/sw.js')
-                .then(registration => {
-                  console.log('Service Worker registered successfully');
-                })
-                .catch(error => {
-                  console.log('Service Worker registration failed');
-                });
-            }
-
-            // Connection status indicator
-            const statusEl = document.getElementById('status');
-            const connectionEl = document.getElementById('connection-status');
-
-            function updateConnectionStatus() {
-              console.log("connection status changed");
-              console.log(naviagtor.onLine);
-              if (navigator.onLine) {
-                statusEl.className = 'offline-indicator online';
-                connectionEl.textContent = '🟢 Online - Fresh content available';
-              } else {
-                statusEl.className = 'offline-indicator offline';
-                connectionEl.textContent = '🔴 Offline - Showing cached content';
-              }
-            }
-
-            // Update status on load and when connection changes
-            updateConnectionStatus();
-            window.addEventListener('online', updateConnectionStatus);
-            window.addEventListener('offline', updateConnectionStatus);
             function createTable(data, id) {
               let table = '<table>';
 
