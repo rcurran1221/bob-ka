@@ -1,0 +1,9 @@
+{
+  "name": "Bobka",
+  "short_name": "Bobka",
+  "description": "An app that works offline",
+  "start_url": "/static",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000"
+}

@@ -1,4 +1,4 @@
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -44,206 +44,244 @@
   <a href="/static/index.html">Go to Index</a>
   <div style="display: flex;flex-direction: column;">
     <div>
-      <h2> Upcoming </h2>
-      <div id="reminder_table">
-      </div>
-      <h2> Todo </h2>
-      <div id="todo_table">
+      <h2> Sleep Log</h2>
+      <div id="sleep_table">
       </div>
       <div>
-        <h2> Log </h2>
-        <div id="log_table">
+        <h2> Upcoming </h2>
+        <div id="reminder_table">
+        </div>
+        <h2> Todo </h2>
+        <div id="todo_table">
         </div>
         <div>
-          <h2> Llm Replies</h2>
-          <div id="llm_table">
+          <h2> Log </h2>
+          <div id="log_table">
           </div>
-        </div>
+          <div>
+            <h2> Llm Replies</h2>
+            <div id="llm_table">
+            </div>
+          </div>
 
-        <script>
 
-          function createTable(data, id) {
-            let table = '<table>';
-
-            data.forEach(item => {
-              // make this display timestamp in a small column on the right hand side?
-              // this is OK - maybe just need to format it how you want
-              table += (`<tr><td class="primary_column">${prettyData(item.data)}</td>` +
-                `<td class="secondary_column">${prettyDateTime(item.timestamp)}</td></tr>`);
-            });
-
-            table += '</table>';
-            document.getElementById(id).innerHTML = table;
-          }
-
-          function createTodoTable(todos) {
-            let table = '<table>';
-
-            console.log(todos);
-            todos.forEach(item => {
-              table += `<tr><td class="primary_column" id="${item.id}">${item.description}</td>` +
-                `<td contenteditable="true" class="secondary_column todo-resolution" id="${item.id}"></td></tr>`;
-            });
-
-            table += '</table>';
-            document.getElementById("todo_table").innerHTML = table;
-
-          }
-
-          function createReminderTable(reminders) {
-            let table = '<table>';
-
-            console.log(reminders);
-            reminders.forEach(item => {
-              // go from utc to local here for date_time field
-              table += `<tr><td class="secondary_column id="${item.id}">${prettyDateTime(item.date_time)}</td><td class="primary_column">${item.description}</td></tr>`;
-            });
-
-            table += '</table>';
-            document.getElementById("reminder_table").innerHTML = table;
-
-          }
-
-          function prettyDateTime(isoDateString) {
-
-            console.log(isoDateString);
-            // Create a Date object from the ISO string
-            const date = new Date(isoDateString);
-
-            console.log(date);
-
-            // Format the date to a pretty string in local time
-            const options = {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              timeZoneName: 'short'
-            };
-
-            const formattedDate = date.toLocaleString(undefined, options);
-
-            console.log(formattedDate);
-
-            return formattedDate
-
-          }
-
-          function prettyData(data) {
-            if (typeof data !== 'string') {
-              data = JSON.stringify(data, null, 2); // Pretty-print JSON
+          <script>
+            if ('serviceWorker' in navigator) {
+              console.log("main js register service worker")
+              navigator.serviceWorker.register('/sw.js')
+                .then(registration => {
+                  console.log('Service Worker registered successfully');
+                })
+                .catch(error => {
+                  console.log('Service Worker registration failed');
+                });
             }
 
-            // Escape HTML to prevent injection
-            data = data.replaceAll(/[&<>"']/g, function (match) {
-              return ({
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#39;',
-              })[match];
-            });
+            // Connection status indicator
+            const statusEl = document.getElementById('status');
+            const connectionEl = document.getElementById('connection-status');
 
-            <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
-            data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
-              return `<pre><code class="language-${lang}">${code}</code></pre>`;
-            });
+            function updateConnectionStatus() {
+              console.log("connection status changed");
+              console.log(naviagtor.onLine);
+              if (navigator.onLine) {
+                statusEl.className = 'offline-indicator online';
+                connectionEl.textContent = '🟢 Online - Fresh content available';
+              } else {
+                statusEl.className = 'offline-indicator offline';
+                connectionEl.textContent = '🔴 Offline - Showing cached content';
+              }
+            }
 
-            data = data.replaceAll(/\n/g, '<br>');
+            // Update status on load and when connection changes
+            updateConnectionStatus();
+            window.addEventListener('online', updateConnectionStatus);
+            window.addEventListener('offline', updateConnectionStatus);
+            function createTable(data, id) {
+              let table = '<table>';
 
-            return data;
-          }
-          const todoTable = document.getElementById('todo_table'); // Or a parent container
-          todoTable.addEventListener('keydown', async event => {
-            if (event.key === 'Enter') {
+              data.forEach(item => {
+                // make this display timestamp in a small column on the right hand side?
+                // this is OK - maybe just need to format it how you want
+                table += (`<tr><td class="primary_column">${prettyData(item.data)}</td>` +
+                  `<td class="secondary_column">${prettyDateTime(item.timestamp)}</td></tr>`);
+              });
 
-              if (event.target.className.includes('todo-resolution')) {
-                const eventData = "delete." + event.target.id;
+              table += '</table>';
+              document.getElementById(id).innerHTML = table;
+            }
 
-                const response = await fetch('/produce/todo-event', {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify(eventData),
-                })
+            function createTodoTable(todos) {
+              let table = '<table>';
 
-                if (response.status == 200) {
-                  event.target.innerText = ""
-                } else {
-                  alert("produce delete todo event failed: " + response.status)
+              todos.forEach(item => {
+                table += `<tr><td id="${item.id}">${item.description}</td>` +
+                  `<td contenteditable="true" class="todo-resolution" id="${item.id}"></td></tr>`;
+              });
+
+              table += '</table>';
+              document.getElementById("todo_table").innerHTML = table;
+
+            }
+
+            function createReminderTable(reminders) {
+              let table = '<table>';
+
+              reminders.forEach(item => {
+                // go from utc to local here for date_time field
+                table += `<tr><td id="${item.id}">${prettyDateTime(item.date_time)}</td><td>${item.description}</td></tr>`;
+              });
+
+              table += '</table>';
+              document.getElementById("reminder_table").innerHTML = table;
+
+            }
+
+            function prettyDateTime(isoDateString) {
+              // Create a Date object from the ISO string
+              const date = new Date(isoDateString);
+
+              // Format the date to a pretty string in local time
+              const options = {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZoneName: 'short'
+              };
+              const formattedDate = date.toLocaleString(undefined, options);
+              return formattedDate
+
+            }
+
+            function prettyData(data) {
+              if (typeof data !== 'string') {
+                data = JSON.stringify(data, null, 2); // Pretty-print JSON
+              }
+
+              // Escape HTML to prevent injection
+              data = data.replaceAll(/[&<>"']/g, function (match) {
+                return ({
+                  '&': '&amp;',
+                  '<': '&lt;',
+                  '>': '&gt;',
+                  '"': '&quot;',
+                  "'": '&#39;',
+                })[match];
+              });
+
+              <!-- // Convert triple backtick code blocks to <pre><code> blocks -->
+              data = data.replaceAll(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
+                return `<pre><code class="language-${lang}">${code}</code></pre>`;
+              });
+
+              data = data.replaceAll(/\n/g, '<br>');
+
+              return data;
+            }
+            const todoTable = document.getElementById('todo_table'); // Or a parent container
+            todoTable.addEventListener('keydown', async event => {
+              if (event.key === 'Enter') {
+
+                if (event.target.className.includes('todo-resolution')) {
+                  const eventData = "delete." + event.target.id;
+
+                  const response = await fetch('/produce/todo-event', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(eventData),
+                  })
+
+                  if (response.status == 200) {
+                    event.target.innerText = ""
+                  } else {
+                    alert("produce delete todo event failed: " + response.status)
+                  }
                 }
               }
+            });
+
+            // todo will be something like this?
+            const url = `/peek/dashboard/1`;
+            try {
+              const response = fetch(url, {
+                method: 'GET',
+              }).then(response => {
+                if (response.ok) {
+                  // Clear notes box on send
+                  response.json().then(data => {
+                    let element = document.getElementById('reminder_table')
+                    let reminders = data.events[0].data.reminders;
+                    createReminderTable(reminders);
+
+                  })
+                }
+              });
+
+            } catch (error) {
+              console.error("Error getting upcoming data", error);
             }
-          });
+            const todoUrl = `/peek/todo-state/1`;
+            try {
+              const response = fetch(todoUrl, {
+                method: 'GET',
+              }).then(response => {
+                if (response.ok) {
+                  response.json().then(data => {
+                    createTodoTable(data.events[0].data.todos, "todo_table");
+                  })
+                }
+              });
 
-          // todo will be something like this?
-          const url = `/peek/dashboard/1`;
-          try {
-            const response = fetch(url, {
-              method: 'GET',
-            }).then(response => {
-              if (response.ok) {
-                // Clear notes box on send
-                response.json().then(data => {
-                  let element = document.getElementById('reminder_table')
-                  let reminders = data.events[0].data.reminders;
-                  console.log(data);
-                  createReminderTable(reminders);
+            } catch (error) {
+              console.error("Error getting upcoming data", error);
+            }
+            try {
+              const response = fetch('/peek/log/30', {
+                method: 'GET',
+              }).then(response => {
+                if (response.ok) {
+                  response.json().then(data => {
+                    createTable(data.events, "log_table");
+                  })
+                }
+              });
 
-                })
-              }
-            });
+            } catch (error) {
+              console.error("Error getting upcoming data", error);
+            }
+            try {
+              const response = fetch('/peek/sleep-log/30', {
+                method: 'GET',
+              }).then(response => {
+                if (response.ok) {
+                  response.json().then(data => {
+                    createTable(data.events, "sleep_table");
+                  })
+                }
+              });
 
-          } catch (error) {
-            console.error("Error getting upcoming data", error);
-          }
-          const todoUrl = `/peek/todo-state/1`;
-          try {
-            const response = fetch(todoUrl, {
-              method: 'GET',
-            }).then(response => {
-              if (response.ok) {
-                response.json().then(data => {
-                  createTodoTable(data.events[0].data.todos, "todo_table");
-                })
-              }
-            });
+            } catch (error) {
+              console.error("Error getting upcoming data", error);
+            }
+            try {
+              const response = fetch('/peek/llm-reply/30', {
+                method: 'GET',
+              }).then(response => {
+                if (response.ok) {
+                  response.json().then(data => {
+                    createTable(data.events, "llm_table");
+                  })
+                }
+              });
 
-          } catch (error) {
-            console.error("Error getting upcoming data", error);
-          }
-          try {
-            const response = fetch('/peek/log/30', {
-              method: 'GET',
-            }).then(response => {
-              if (response.ok) {
-                response.json().then(data => {
-                  createTable(data.events, "log_table");
-                })
-              }
-            });
-
-          } catch (error) {
-            console.error("Error getting upcoming data", error);
-          }
-          try {
-            const response = fetch('/peek/llm-reply/30', {
-              method: 'GET',
-            }).then(response => {
-              if (response.ok) {
-                response.json().then(data => {
-                  createTable(data.events, "llm_table");
-                })
-              }
-            });
-
-          } catch (error) {
-            console.error("Error getting upcoming data", error);
-          }
-        </script>
+            } catch (error) {
+              console.error("Error getting upcoming data", error);
+            }
+          </script>
 </body>
 
 </html>

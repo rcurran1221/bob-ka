@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <title>Notes Sender</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Responsive meta -->
+  <link rel="manifest" href="/manifest.json">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -91,6 +92,34 @@
   <a href="/static/topics.html">Go to Topics Page</a>
   <a href="/static/poll.html">Go to Poll Page</a>
   <script>
+    if ('serviceWorker' in navigator) {
+      console.log("main js register service worker")
+      navigator.serviceWorker.register('static/sw.js')
+        .then(registration => {
+          console.log('Service Worker registered successfully');
+        })
+        .catch(error => {
+          console.log('Service Worker registration failed');
+        });
+    }
+
+    // Connection status indicator
+    const statusEl = document.getElementById('status');
+    const connectionEl = document.getElementById('connection-status');
+
+    function updateConnectionStatus() {
+      console.log("connection status changed");
+      console.log(navigator.onLine);
+      if (navigator.onLine) {
+      } else {
+      }
+    }
+
+    // Update status on load and when connection changes
+    updateConnectionStatus();
+    window.addEventListener('online', updateConnectionStatus);
+    window.addEventListener('offline', updateConnectionStatus);
+
     document.getElementById('noteForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       const topic = document.getElementById('topic').value.trim();
