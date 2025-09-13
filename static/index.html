@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <title>Notes Sender</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Responsive meta -->
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="static/manifest.json">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -92,6 +92,59 @@
   <a href="/static/topics.html">Go to Topics Page</a>
   <a href="/static/poll.html">Go to Poll Page</a>
   <script>
+    function retransmitOfflineMessages() {
+      console.log("checking health");
+      fetch("/health", {
+        method: "GET",
+      }).then(resp => {
+        if (resp.ok) {
+          console.log("app is online");
+          // try to transmit offlinequeue
+          const offlineQueueStr = localStorage.getItem("offline-queue");
+          const offlineQueue = JSON.parse(offlineQueueStr);
+          if (offlineQueue.length > 0) {
+            // transmit
+            console.log("found offline queue length of : " + offlineQueue.length);
+            offlineQueue.forEach((item) => {
+              const url = `/produce/${encodeURIComponent(item.topic)}`;
+              fetch(url, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(item.message)
+              }).then(response => {
+
+                if (response.ok) {
+
+                } else {
+                  console.log("got error when sending" + response);
+                }
+              }).catch(error => {
+                console.log("error retransmitting message" + error + item);
+              });
+
+              localStorage.setItem("offline-queue", "[]");
+              console.log("successfully cleared offline queue");
+            })
+          };
+        }
+      }).catch(error => {
+        console.log("app is offline");
+      });
+    }
+
+
+    setInterval(retransmitOfflineMessages, 1000);
+
+    function updateConnectionStatus() {
+      console.log("connection status changed");
+      console.log(navigator);
+      if (navigator.onLine) {
+      } else {
+      }
+    }
+
     if ('serviceWorker' in navigator) {
       console.log("main js register service worker")
       navigator.serviceWorker.register('static/sw.js')
@@ -100,25 +153,9 @@
         })
         .catch(error => {
           console.log('Service Worker registration failed');
+          console.log(error);
         });
     }
-
-    // Connection status indicator
-    const statusEl = document.getElementById('status');
-    const connectionEl = document.getElementById('connection-status');
-
-    function updateConnectionStatus() {
-      console.log("connection status changed");
-      console.log(navigator.onLine);
-      if (navigator.onLine) {
-      } else {
-      }
-    }
-
-    // Update status on load and when connection changes
-    updateConnectionStatus();
-    window.addEventListener('online', updateConnectionStatus);
-    window.addEventListener('offline', updateConnectionStatus);
 
     document.getElementById('noteForm').addEventListener('submit', async function (event) {
       event.preventDefault();
@@ -147,6 +184,20 @@
         }
       } catch (error) {
         console.error("Error sending notes:", error);
+        isOnline = false;
+        let offlineQueueStr = localStorage.getItem("offline-queue");
+        if (!offlineQueueStr) {
+          offlineQueueStr = "[]";
+        }
+        let offlineQueue = JSON.parse(offlineQueueStr);
+        offlineQueue.push({topic: topic, message: notes});
+        console.log(offlineQueue);
+        localStorage.setItem("offline-queue", JSON.stringify(offlineQueue));
+        document.getElementById('notes').value = "";
+        // Show success message
+        const msg = document.getElementById('message');
+        msg.style.display = "none";
+        document.getElementById('topic').focus(); // Focus topic input
       }
     });
   </script>
