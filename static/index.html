@@ -29,6 +29,16 @@
       display: block;
     }
 
+    .dark-mode {
+      background-color: #333;
+      color: #fff;
+    }
+
+    .light-mode {
+      background-color: #f7f7f7;
+      color: #333;
+    }
+
     input[type="text"],
     textarea {
       width: 100%;
@@ -76,13 +86,13 @@
   </style>
 </head>
 
-<body>
-  <form id="noteForm">
+<body class="dark-mode">
+  <form id="noteForm" class="dark-mode">
     <label for="topic">Topic:</label>
-    <input type="text" id="topic" name="topic" size="20" required>
+    <input type="text" id="topic" name="topic" size="20" class="dark-mode" required>
 
     <label for="notes">Notes:</label>
-    <textarea id="notes" name="notes" rows="4" required></textarea>
+    <textarea id="notes" name="notes" rows="4" class="dark-mode" required></textarea>
 
     <button type="submit">Send</button>
     <div id="message">✅ Notes sent successfully!</div>
@@ -102,7 +112,7 @@
           // try to transmit offlinequeue
           const offlineQueueStr = localStorage.getItem("offline-queue");
           const offlineQueue = JSON.parse(offlineQueueStr);
-          if (offlineQueue.length > 0) {
+          if (offlineQueue && offlineQueue.length > 0) {
             // transmit
             console.log("found offline queue length of : " + offlineQueue.length);
             offlineQueue.forEach((item) => {
@@ -180,7 +190,7 @@
           // Show success message
           const msg = document.getElementById('message');
           msg.style.display = "none";
-          document.getElementById('topic').focus(); // Focus topic input
+          document.getElementById('notes').focus(); // Focus topic input
         }
       } catch (error) {
         console.error("Error sending notes:", error);
@@ -197,7 +207,7 @@
         // Show success message
         const msg = document.getElementById('message');
         msg.style.display = "none";
-        document.getElementById('topic').focus(); // Focus topic input
+        document.getElementById('notes').focus(); // Focus topic input
       }
     });
   </script>
