@@ -8,6 +8,7 @@ const CACHE_NAME = 'my-webpage-cache';
 self.addEventListener('install', (event) => {
   console.log("intall event");
   console.log(event);
+  console.log(caches);
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
@@ -24,6 +25,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('fetch', (event) => {
   console.log("fetch intercepted");
   console.log(event);
+  console.log(caches);
   event.respondWith(
     caches.match(event.request).then((response) => {
       return response || fetch(event.request);

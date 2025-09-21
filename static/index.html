@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <title>Notes Sender</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Responsive meta -->
-  <link rel="manifest" href="static/manifest.json">
+  <link rel="manifest" href="./static/manifest.json">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -157,7 +157,7 @@
 
     if ('serviceWorker' in navigator) {
       console.log("main js register service worker")
-      navigator.serviceWorker.register('static/sw.js')
+      navigator.serviceWorker.register('./static/sw.js')
         .then(registration => {
           console.log('Service Worker registered successfully');
         })
