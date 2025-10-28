@@ -48,3 +48,9 @@ compression = true
 temporary = false
 backoff_dialation_ms = 1000
 cap = 100
+[[topics]]
+name = "job"
+compression = true
+temporary = false
+backoff_dialation_ms = 1000
+cap = 100
