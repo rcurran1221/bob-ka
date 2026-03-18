@@ -1,3 +1,6 @@
+# License
+No one is allowed to use this without written consent of rcurran1221
+
 # Project Zinger
 - lightweight RESTful Kafka-esque event stream over HTTP, written in rust
 - boblog or bob-ka or bob-queue
