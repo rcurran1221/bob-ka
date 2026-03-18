@@ -6,6 +6,12 @@ temp_consumer_state = false
 port = 8011
 
 [[topics]]
+name = "test-topic-quickstart"
+compression = true
+cap = 100
+cap_tolerance = 10
+temporary = false
+[[topics]]
 name = "test-topic"
 compression = true
 cap = 100
@@ -35,6 +41,10 @@ name = "test-topic-time-retention"
 compression = true
 time_based_retention = 1 # minute
 temporary = false
+[[topics]]
+name = "test-topic-peek"
+compression = true
+temporary = true
 
 [[nodes]]
 name = "test-node-0"
