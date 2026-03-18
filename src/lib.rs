@@ -333,8 +333,6 @@ async fn peek_handler(
         })
         .collect();
 
-    events.reverse();
-
     let n_events = events.len();
     let duration = Instant::now().duration_since(start);
     event!(

@@ -446,10 +446,10 @@ async fn test_peek() {
     let body = peek_resp.json::<Events<Message>>().await.unwrap();
     assert_eq!(body.events.len(), 3);
 
-    // events should be in ascending order and the last 3 produced
-    assert_eq!(body.events[0].data.event_num, 2);
+    // events should be in descending order (newest first) and the last 3 produced
+    assert_eq!(body.events[0].data.event_num, 4);
     assert_eq!(body.events[1].data.event_num, 3);
-    assert_eq!(body.events[2].data.event_num, 4);
+    assert_eq!(body.events[2].data.event_num, 2);
 
     // peek more than exist — should return all 5
     let peek_all_resp = client
