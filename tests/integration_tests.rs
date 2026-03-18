@@ -414,6 +414,63 @@ async fn test_time_based_retention() {
     assert!(!event_nums.contains(&0));
 }
 
+#[tokio::test]
+async fn test_peek() {
+    let client = Client::new();
+    let topic = "test-topic-peek";
+
+    // produce 5 messages
+    for i in 0..5u16 {
+        let resp = client
+            .post(format!("http://localhost:8011/produce/{topic}"))
+            .json(&Message {
+                event_name: format!("peek-event-{i}"),
+                event_data: "peek data".to_string(),
+                event_num: i,
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // peek the last 3 — should return exactly 3, in ascending order
+    let peek_resp = client
+        .get(format!("http://localhost:8011/peek/{topic}/3"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(peek_resp.status(), StatusCode::OK);
+
+    let body = peek_resp.json::<Events<Message>>().await.unwrap();
+    assert_eq!(body.events.len(), 3);
+
+    // events should be in descending order (newest first) and the last 3 produced
+    assert_eq!(body.events[0].data.event_num, 4);
+    assert_eq!(body.events[1].data.event_num, 3);
+    assert_eq!(body.events[2].data.event_num, 2);
+
+    // peek more than exist — should return all 5
+    let peek_all_resp = client
+        .get(format!("http://localhost:8011/peek/{topic}/100"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(peek_all_resp.status(), StatusCode::OK);
+    let all_body = peek_all_resp.json::<Events<Message>>().await.unwrap();
+    assert_eq!(all_body.events.len(), 5);
+
+    // peek on unknown topic — should 404
+    let not_found_resp = client
+        .get("http://localhost:8011/peek/no-such-topic/5")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(not_found_resp.status(), StatusCode::NOT_FOUND);
+}
+
 #[derive(Serialize, Deserialize)]
 struct Message {
     event_data: String,

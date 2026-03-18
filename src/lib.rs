@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
-use chrono::Local;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
@@ -215,6 +215,7 @@ pub async fn start_web_server(config: BobConfig) -> Result<(), Box<dyn Error>> {
         )
         .route("/produce/{topic_name}", post(produce_handler))
         .route("/stats/{topic_name}", get(topic_stats_handler))
+        .route("/peek/{topic_name}/{n}", get(peek_handler))
         .with_state(shared_state);
 
     // Run the server
@@ -252,6 +253,97 @@ async fn topic_stats_handler(
             Json(json!("error: could not find topic: {topic_name}")),
         ),
     }
+}
+
+async fn peek_handler(
+    Path((topic_name, n)): Path<(String, usize)>,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let start = Instant::now();
+    event!(Level::INFO, message = "got peek request", topic_name, n);
+
+    let topic_db = match state.topic_db_map.get(&topic_name) {
+        Some(db) => db,
+        None => {
+            event!(Level::ERROR, message = "topic not found", topic_name);
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": "Topic not found", "topic_name": topic_name })),
+            );
+        }
+    };
+
+    let mut events: Vec<OutgoingMessage> = topic_db
+        .topic_tree
+        .iter()
+        .rev()
+        .take(n)
+        .filter_map(|e| match e {
+            Ok(e) => {
+                let key = match to_u64(e.0) {
+                    Some(v) => v,
+                    None => {
+                        event!(
+                            Level::ERROR,
+                            message = "failed to convert vec into [u8; 8]",
+                            topic_name
+                        );
+                        return None;
+                    }
+                };
+
+                let value = match String::from_utf8(e.1.to_vec()) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        event!(
+                            Level::ERROR,
+                            message = "ivec to string from utf8 failed",
+                            topic_name
+                        );
+                        return None;
+                    }
+                };
+
+                let message: AtRestMessage = match serde_json::from_str(&value) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        event!(
+                            Level::ERROR,
+                            message = "failed to parse value into message",
+                            error = e.to_string(),
+                        );
+                        return None;
+                    }
+                };
+
+                Some(OutgoingMessage {
+                    id: key,
+                    data: message.data,
+                    timestamp: message.timestamp,
+                })
+            }
+            Err(_) => {
+                event!(
+                    Level::ERROR,
+                    message = "error reading messages from topic",
+                    topic_name
+                );
+                None
+            }
+        })
+        .collect();
+
+    let n_events = events.len();
+    let duration = Instant::now().duration_since(start);
+    event!(
+        Level::INFO,
+        message = "successfully processed peek request",
+        topic_name,
+        n_events,
+        duration = format!("{:?}", duration)
+    );
+
+    (StatusCode::OK, Json(json!({ "events": events })))
 }
 
 async fn ack_handler(
@@ -319,7 +411,7 @@ async fn produce_handler(
         }
     };
 
-    let timestamp = Local::now().format("%Y-%m-%d][%H:%M:%S");
+    let timestamp = Utc::now().format("%Y-%m-%d][%H:%M:%S");
     let message = AtRestMessage {
         data: incoming_message,
         timestamp: timestamp.to_string(),
