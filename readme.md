@@ -13,6 +13,7 @@ No one is allowed to use this without written consent of rcurran1221
 - POST /ack/{topic_name}/{consumer_id}/{last_msg_id}
 - POST /produce/{topic_name} -> JSON in body, persisted as is
 - GET /stats/{topic_name} -> returns JSON {"topic_name": "test", "topic_length": 123}
+- GET /peek/{topic_name}/{n_items} returns JSON of most recent N messages
  
 ## Features
 - N topic, N consumer, N producer
