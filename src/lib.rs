@@ -3,7 +3,7 @@ use axum::extract::{Path, State};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Router, http::StatusCode, routing::get};
-use chrono::Local;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_vec};
 use sled::{Config, Db, IVec, Tree};
@@ -411,7 +411,7 @@ async fn produce_handler(
         }
     };
 
-    let timestamp = Local::now().format("%Y-%m-%d][%H:%M:%S");
+    let timestamp = Utc::now().format("%Y-%m-%d][%H:%M:%S");
     let message = AtRestMessage {
         data: incoming_message,
         timestamp: timestamp.to_string(),
